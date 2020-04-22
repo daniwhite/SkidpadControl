@@ -66,8 +66,23 @@ simulator.Initialize()
 simulator.AdvanceTo(10)
 
 # Plot the results.
-plt.figure()
-plt.plot(logger.sample_times(), logger.data().transpose())
-plt.xlabel('t')
-plt.ylabel('y(t)')
+v_x_data = logger.data()[0, :]
+v_y_data = logger.data()[1, :]
+r_data = logger.data()[2, :]
+
+plt.subplot(311)
+plt.plot(logger.sample_times(), v_x_data)
+plt.xlabel('$t$')
+plt.ylabel('$v_x$(t)')
+
+plt.subplot(312)
+plt.plot(logger.sample_times(), v_y_data)
+plt.xlabel('$t$')
+plt.ylabel('$v_y$(t)')
+
+plt.subplot(313)
+plt.plot(logger.sample_times(), r_data)
+plt.xlabel('$t$')
+plt.ylabel('$r(t)$')
+
 plt.show()
