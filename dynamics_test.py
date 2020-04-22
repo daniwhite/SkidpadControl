@@ -8,6 +8,20 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 
+# Set up car parameters (copied from a car parameter file in the sim repo)
+m = 276  # kg
+Iz = 180.49  # kg*m^2
+l_F = 0.583*60*0.0254  # m
+l_R = (1-0.583)*60*0.0254  # m
+
+# Tire parameters
+# Longitudinal stiffness guessed using tire forces ~ 1000 N, slip ratio ~ 0.1 -> 1000/0.1=1e4
+S_FL = 1e4
+S_RL = 1e4
+# Cornering stiffness guessed using tire forces ~ 1000 N, slip angle ~ 1
+S_FC = 1e3
+S_RC = 1e3
+
 x = sym.Variable("x")
 vector_system = SymbolicVectorSystem(state=[x], dynamics=[0.1], output=[x])
 
