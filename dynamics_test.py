@@ -107,7 +107,7 @@ plt.ylabel('$r(t)$')
 plt.figure()
 plt.title("Lateral tire forces")
 plt.plot(logger.sample_times(), np.arctan2(
-    v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\{Y\}$")
+    v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\\{Y\\}$")
 plt.xlabel("$t$")
 plt.ylabel("$F_Y$")
 
