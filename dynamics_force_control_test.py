@@ -1,6 +1,6 @@
 """"Set up dynamics for cornering and visualize them, but commanding all tire forces directly."""
 
-import math
+import numpy as np
 import matplotlib.pyplot as plt
 import pydrake.symbolic as sym
 
@@ -8,14 +8,15 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 
-# Set up car parameters (copied from a car parameter file in the sim repo)
+# Set up car parameters
 m = 276  # kg
 Iz = 180.49  # kg*m^2
+# Changed to be neutral steer
 RWB = 0.5  # 0.583
 l_F = RWB*60*0.0254  # m
 l_R = (1-RWB)*60*0.0254  # m
 
-# Tire parameters
+# Hand-wavy tire parameters
 # Longitudinal stiffness guessed using tire forces ~ 1000 N, slip ratio ~ 0.1 -> 1000/0.1=1e4
 S_FL = 1e4
 S_RL = 1e4
@@ -38,7 +39,6 @@ x = sym.Variable("x4")
 y = sym.Variable("x5")
 psi = sym.Variable("x6")
 
-
 dynamics = [
     (sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)
      * S_FC*alpha_F + S_RL*kappa_R)/m - v_y*r,
@@ -50,31 +50,35 @@ dynamics = [
     v_y*sym.sin(psi) + v_x*sym.cos(psi),
     r
 ]
+
 vector_system = SymbolicVectorSystem(
     state=[v_x, v_y, r, x, y, psi],
     input=[kappa_F, kappa_R, alpha_F, alpha_R, delta],
     dynamics=dynamics,
     output=[v_x, v_y, r, x, y, psi])
+
 builder = DiagramBuilder()
 system = builder.AddSystem(vector_system)
 logger = LogOutput(system.get_output_port(0), builder)
 builder.ExportInput(system.get_input_port(0))
-
 diagram = builder.Build()
 
-# Set the initial conditions, x(0).
+# Initial conditions
+x0 = [1, 1, 0, 0, 0, 0]
 context = diagram.CreateDefaultContext()
-context.SetContinuousState([1, 1, 0, 0, 0, 0])
+context.SetContinuousState(x0)
 
+# Fix input
+u = [0, 0, 1, 1, 0]
 inp = system.get_input_port(0)
-inp.FixValue(context, [0, 0, 1, 1, 0])
+inp.FixValue(context, u)
 
 # Create the simulator, and simulate for 10 seconds.
 simulator = Simulator(diagram, context)
 simulator.Initialize()
 simulator.AdvanceTo(10)
 
-# Plot the results.
+# Plots
 v_x_data = logger.data()[0, :]
 v_y_data = logger.data()[1, :]
 r_data = logger.data()[2, :]
@@ -100,5 +104,9 @@ plt.ylabel('$r(t)$')
 
 plt.figure()
 plt.scatter(x_data, y_data, c=vel_mag)
+plt.xlabel("$x$")
+plt.ylabel("$y$")
+cb = plt.colorbar()
+cb.set_label("Speed")
 
 plt.show()
