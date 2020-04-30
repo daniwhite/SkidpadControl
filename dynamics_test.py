@@ -86,9 +86,11 @@ v_y_data = logger.data()[1, :]
 r_data = logger.data()[2, :]
 x_data = logger.data()[3, :]
 y_data = logger.data()[4, :]
+psi_data = logger.data()[5, :]
 
 vel_mag = (v_x_data**2 + v_y_data**2)**0.5
 
+plt.figure()
 plt.subplot(311)
 plt.plot(logger.sample_times(), v_x_data)
 plt.xlabel('$t$')
@@ -105,17 +107,45 @@ plt.xlabel('$t$')
 plt.ylabel('$r(t)$')
 
 plt.figure()
+plt.subplot(311)
+plt.plot(logger.sample_times(), x_data)
+plt.xlabel('$t$')
+plt.ylabel('$x$(t)')
+
+plt.subplot(312)
+plt.plot(logger.sample_times(), y_data)
+plt.xlabel('$t$')
+plt.ylabel('$y$(t)')
+
+plt.subplot(313)
+plt.plot(logger.sample_times(), psi_data)
+plt.xlabel('$t$')
+plt.ylabel('$\\psi$')
+
+plt.figure()
+# psi=0 should point up, psi=pi/2 should point right
+plt.polar(np.pi/2-psi_data, logger.sample_times())
+plt.title("$90\degree-\\psi$")
+
+plt.figure()
+plt.scatter(x_data, y_data, c=vel_mag, marker=(
+    3, 0, -psi_data[-1]*180/np.pi))  # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right
+plt.xlabel("$x$")
+plt.ylabel("$y$")
+cb = plt.colorbar()
+cb.set_label("Speed")
+left, right = plt.xlim()
+bot, top = plt.ylim()
+min_dim = min(left, bot)
+max_dim = max(top, right)
+plt.xlim(min_dim, max_dim)
+plt.ylim(min_dim, max_dim)
+
+plt.figure()
 plt.title("Lateral tire forces")
 plt.plot(logger.sample_times(), np.arctan2(
     v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\\{Y\\}$")
 plt.xlabel("$t$")
 plt.ylabel("$F_Y$")
-
-plt.figure()
-plt.scatter(x_data, y_data, c=vel_mag)
-plt.xlabel("$x$")
-plt.ylabel("$y$")
-cb = plt.colorbar()
-cb.set_label("Speed")
 
 plt.show()
