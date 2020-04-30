@@ -66,7 +66,7 @@ builder.ExportInput(system.get_input_port(0))
 diagram = builder.Build()
 
 # Initial conditions
-x0 = [1, 1, 0, 0, 0, 0]
+x0 = [1, 0, 0, 0, 0, 0]
 context = diagram.CreateDefaultContext()
 context.SetContinuousState(x0)
 
