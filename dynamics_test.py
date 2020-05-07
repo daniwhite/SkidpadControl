@@ -125,7 +125,7 @@ plt.ylabel('$\\psi$')
 plt.figure()
 # psi=0 should point up, psi=pi/2 should point right
 plt.polar(np.pi/2-psi_data, logger.sample_times())
-plt.title("$90\degree-\\psi$")
+plt.title("$90\\degree-\\psi$")
 
 plt.figure()
 plt.scatter(x_data, y_data, c=vel_mag, marker=(
