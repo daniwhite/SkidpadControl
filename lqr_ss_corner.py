@@ -105,16 +105,19 @@ vel_mag = (v_x_data**2 + v_y_data**2)**0.5
 plt.figure()
 plt.subplot(311)
 plt.plot(logger.sample_times(), v_x_data)
+plt.axhline(x_bar[0], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_x$(t)')
 
 plt.subplot(312)
 plt.plot(logger.sample_times(), v_y_data)
+plt.axhline(x_bar[1], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_y$(t)')
 
 plt.subplot(313)
 plt.plot(logger.sample_times(), r_data)
+plt.axhline(x_bar[2], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$r(t)$')
 
