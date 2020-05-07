@@ -34,12 +34,15 @@ delta = sym.Variable("u3")
 v_x = sym.Variable("x1")
 v_y = sym.Variable("x2")
 r = sym.Variable("x3")
+x = sym.Variable("x4")
+y = sym.Variable("x5")
+psi = sym.Variable("x6")
 
 # Slip angles
 alpha_F = sym.atan2(v_y+l_F*r, v_x) - delta
 alpha_R = sym.atan2(v_y+l_F*r, v_x)
 
-dynamics = [
+plant_dynamics = [
     (sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)
      * S_FC*alpha_F + S_RL*kappa_R)/m - v_y*r,
     (sym.sin(delta)*S_FL*kappa_F + sym.cos(delta)
@@ -48,11 +51,23 @@ dynamics = [
          * S_FC*alpha_F) - l_R*S_RC*alpha_R
 ]
 
-vector_system = SymbolicVectorSystem(
+plant_vector_system = SymbolicVectorSystem(
     state=[v_x, v_y, r],
     input=[kappa_F, kappa_R, delta],
-    dynamics=dynamics,
+    dynamics=plant_dynamics,
     output=[v_x, v_y, r])
+
+position_dynamics = [
+    v_y*sym.cos(psi) - v_x*sym.sin(psi),
+    v_y*sym.sin(psi) + v_x*sym.cos(psi),
+    r
+]
+
+position_system = SymbolicVectorSystem(
+    state=[x, y, psi],
+    input=[v_x, v_y, r],
+    dynamics=position_dynamics,
+    output=[x, y, psi])
 
 v_bar = 300
 delta_bar = 0.01
@@ -62,8 +77,11 @@ kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
 x_bar = [v_bar, 0, 0]
 u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
 
+# Set up plant and position
 builder = DiagramBuilder()
-plant = builder.AddSystem(vector_system)
+plant = builder.AddSystem(plant_vector_system)
+position = builder.AddSystem(position_system)
+builder.Connect(plant.get_output_port(0), position.get_input_port(0))
 
 # Set up LQR
 lqr_context = plant.CreateDefaultContext()
@@ -73,19 +91,16 @@ Q = np.diag([1, 1, 1])
 R = np.diag([0.005, 0.005, 0.01])
 LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
 
-# Finish set up
+# Connect plant to LQR
 controller = builder.AddSystem(LQR_Controller)
 builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
 builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
-logger = LogOutput(plant.get_output_port(0), builder)
-# builder.ExportInput(system.get_input_port(0))
+
+# Set up logging
+plant_logger = LogOutput(plant.get_output_port(0), builder)
+position_logger = LogOutput(position.get_output_port(0), builder)
 diagram = builder.Build()
 context = diagram.CreateDefaultContext()
-
-# # Initial conditions
-# x0 = [0, 0, 0, 0, 0, 0]
-# context = diagram.CreateDefaultContext()
-# context.SetContinuousState(x0)
 
 # Create the simulator, and simulate for 10 seconds.
 simulator = Simulator(diagram, context)
@@ -93,49 +108,49 @@ simulator.Initialize()
 simulator.AdvanceTo(0.1)
 
 # Plots
-v_x_data = logger.data()[0, :]
-v_y_data = logger.data()[1, :]
-r_data = logger.data()[2, :]
-# x_data = logger.data()[3, :]
-# y_data = logger.data()[4, :]
-# psi_data = logger.data()[3, :]
+v_x_data = plant_logger.data()[0, :]
+v_y_data = plant_logger.data()[1, :]
+r_data = plant_logger.data()[2, :]
+x_data = position_logger.data()[0, :]
+y_data = position_logger.data()[1, :]
+psi_data = position_logger.data()[2, :]
 
 vel_mag = (v_x_data**2 + v_y_data**2)**0.5
 
 plt.figure()
 plt.subplot(311)
-plt.plot(logger.sample_times(), v_x_data)
+plt.plot(plant_logger.sample_times(), v_x_data)
 plt.axhline(x_bar[0], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_x$(t)')
 
 plt.subplot(312)
-plt.plot(logger.sample_times(), v_y_data)
+plt.plot(plant_logger.sample_times(), v_y_data)
 plt.axhline(x_bar[1], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_y$(t)')
 
 plt.subplot(313)
-plt.plot(logger.sample_times(), r_data)
+plt.plot(plant_logger.sample_times(), r_data)
 plt.axhline(x_bar[2], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$r(t)$')
 
-# plt.figure()
-# plt.subplot(311)
-# plt.plot(logger.sample_times(), x_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$x$(t)')
+plt.figure()
+plt.subplot(311)
+plt.plot(position_logger.sample_times(), x_data)
+plt.xlabel('$t$')
+plt.ylabel('$x$(t)')
 
-# plt.subplot(312)
-# plt.plot(logger.sample_times(), y_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$y$(t)')
+plt.subplot(312)
+plt.plot(position_logger.sample_times(), y_data)
+plt.xlabel('$t$')
+plt.ylabel('$y$(t)')
 
-# plt.subplot(313)
-# plt.plot(logger.sample_times(), psi_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$\\psi$')
+plt.subplot(313)
+plt.plot(position_logger.sample_times(), psi_data)
+plt.xlabel('$t$')
+plt.ylabel('$\\psi$')
 
 # plt.figure()
 # # psi=0 should point up, psi=pi/2 should point right
