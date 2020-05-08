@@ -71,12 +71,19 @@ position_system = SymbolicVectorSystem(
     output=[x, y, psi])
 
 v_bar = 300
-delta_bar = 0.01
-kappa_F_bar = S_FC*delta_bar/(np.tan(delta_bar)*S_FL)
-kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
-    (1+1/np.tan(delta_bar)**2)
+delta_bar = 0
+# In this edge case, it gets a nan when it divdes 0/0. However, since velocity is constant (and
+# since delta bar is zero, we are going straight), the kappa values should both be zero.
+if delta_bar == 0:
+    kappa_F_bar = 0
+    kappa_R_bar = 0
+else:
+    kappa_F_bar = S_FC*delta_bar/(np.tan(delta_bar)*S_FL)
+    kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
+        (1+1/np.tan(delta_bar)**2)
 x_bar = [v_bar, 0, 0]
 u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
+print(u_bar)
 
 # Set up plant and position
 builder = DiagramBuilder()
@@ -106,7 +113,7 @@ context = diagram.CreateDefaultContext()
 # Create the simulator, and simulate for 10 seconds.
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(0.1)
+simulator.AdvanceTo(0.001)
 
 # Plots
 v_x_data = plant_logger.data()[0, :]
