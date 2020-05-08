@@ -1,13 +1,15 @@
 """"Set up dynamics for cornering and visualize them."""
 
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import pydrake.symbolic as sym
-
-from pydrake.systems.analysis import Simulator
-from pydrake.systems.framework import DiagramBuilder
+# GLOBAL OPTIONS
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
+from pydrake.systems.framework import DiagramBuilder
+from pydrake.systems.analysis import Simulator
+import pydrake.symbolic as sym
+import matplotlib.animation as animation
+import matplotlib.pyplot as plt
+import numpy as np
+force_control = True
+
 
 # Set up car parameters
 m = 276  # kg
@@ -39,8 +41,13 @@ y = sym.Variable("x5")
 psi = sym.Variable("x6")
 
 # Slip angles
-alpha_F = sym.atan2(v_y+l_F*r, v_x) - delta
-alpha_R = sym.atan2(v_y+l_F*r, v_x)
+if force_control:
+    # More inputs
+    alpha_F = sym.Variable("u4")
+    alpha_R = sym.Variable("u5")
+else:
+    alpha_F = sym.atan2(v_y+l_F*r, v_x) - delta
+    alpha_R = sym.atan2(v_y+l_F*r, v_x)
 
 plant_dynamics = [
     (sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)
@@ -51,9 +58,14 @@ plant_dynamics = [
          * S_FC*alpha_F) - l_R*S_RC*alpha_R
 ]
 
+if force_control:
+    plant_input = [kappa_F, kappa_R, alpha_F, alpha_R, delta]
+else:
+    plant_input = [kappa_F, kappa_R, delta]
+
 plant_vector_system = SymbolicVectorSystem(
     state=[v_x, v_y, r],
-    input=[kappa_F, kappa_R, delta],
+    input=plant_input,
     dynamics=plant_dynamics,
     output=[v_x, v_y, r])
 
@@ -88,7 +100,10 @@ x0 = [1, 0, 0, 0, 0, 0]
 context.SetContinuousState(x0)
 
 # Fix input
-u = [1, 1, 0]
+if force_control:
+    u = [1, 1, 0, 0, 0]
+else:
+    u = [1, 1, 0]
 inp = plant.get_input_port(0)
 inp.FixValue(context, u)
 
@@ -145,12 +160,12 @@ plt.polar(np.pi/2-psi_data, position_logger.sample_times())
 plt.title("$90\\degree-\\psi$")
 
 
-plt.figure()
-plt.title("Lateral tire forces")
-plt.plot(plant_logger.sample_times(), np.arctan2(
-    v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\\{Y\\}$")
-plt.xlabel("$t$")
-plt.ylabel("$F_Y$")
+# plt.figure()
+# plt.title("Lateral tire forces")
+# plt.plot(plant_logger.sample_times(), np.arctan2(
+#     v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\\{Y\\}$")
+# plt.xlabel("$t$")
+# plt.ylabel("$F_Y$")
 
 plt.figure()
 plt.scatter(x_data, y_data, c=vel_mag, marker=(
