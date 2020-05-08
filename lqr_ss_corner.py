@@ -2,6 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import pydrake.symbolic as sym
 
 from pydrake.systems.analysis import Simulator
@@ -152,30 +153,60 @@ plt.plot(position_logger.sample_times(), psi_data)
 plt.xlabel('$t$')
 plt.ylabel('$\\psi$')
 
-# plt.figure()
-# # psi=0 should point up, psi=pi/2 should point right
-# plt.polar(np.pi/2-psi_data, logger.sample_times())
-# plt.title("$90\degree-\\psi$")
+plt.figure()
+# psi=0 should point up, psi=pi/2 should point right
+plt.polar(np.pi/2-psi_data, position_logger.sample_times())
+plt.title("$90\\degree-\\psi$")
 
-# plt.figure()
-# plt.scatter(x_data, y_data, c=vel_mag, marker=(
-#     3, 0, -psi_data[-1]*180/np.pi))  # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right
-# plt.xlabel("$x$")
-# plt.ylabel("$y$")
-# cb = plt.colorbar()
-# cb.set_label("Speed")
-# left, right = plt.xlim()
-# bot, top = plt.ylim()
-# min_dim = min(left, bot)
-# max_dim = max(top, right)
-# plt.xlim(min_dim, max_dim)
-# plt.ylim(min_dim, max_dim)
+plt.xlabel("$t$")
+plt.ylabel("$F_Y$")
 
-# plt.figure()
-# plt.title("Lateral tire forces")
-# plt.plot(logger.sample_times(), np.arctan2(
-#     v_y_data+l_F*r_data, v_x_data) - u[2], label="$F_\\{Y\\}$")
-# plt.xlabel("$t$")
-# plt.ylabel("$F_Y$")
+plt.figure()
+plt.scatter(x_data, y_data, c=vel_mag, marker=(
+    3, 0, -psi_data[-1]*180/np.pi))  # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right
+plt.xlabel("$x$")
+plt.ylabel("$y$")
+cb = plt.colorbar()
+cb.set_label("Speed")
+left, right = plt.xlim()
+bot, top = plt.ylim()
+min_dim = min(left, bot)
+max_dim = max(top, right)
+plt.xlim(min_dim, max_dim)
+plt.ylim(min_dim, max_dim)
 
+fig = plt.figure()
+ax = fig.add_subplot(111, xlim=(min_dim, max_dim), ylim=(min_dim, max_dim))
+ax.set_aspect('equal')
+
+line, = ax.plot([], [], 'o-')
+time_template = 'time = %.1fs'
+time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
+
+ax.set_aspect('equal')
+
+line, = ax.plot([], [], 'o-')
+time_template = 'time = %.1fs'
+time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
+
+dt = position_logger.sample_times()[7] - position_logger.sample_times()[6]
+
+
+def init():
+    line.set_data([], [])
+    time_text.set_text('')
+    return line, time_text
+
+
+def animate(i):
+    thisx = [x_data[i]]
+    thisy = [y_data[i]]
+
+    line.set_data(thisx, thisy)
+    time_text.set_text(time_template % (i*dt))
+    return line, time_text
+
+
+ani = animation.FuncAnimation(fig, animate, range(1, len(y_data)),
+                              interval=dt*1000, blit=True, init_func=init)
 plt.show()

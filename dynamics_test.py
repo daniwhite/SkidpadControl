@@ -167,7 +167,7 @@ plt.xlim(min_dim, max_dim)
 plt.ylim(min_dim, max_dim)
 
 fig = plt.figure()
-ax = fig.add_subplot(111, xlim=(-5, 3500), ylim=(-5, 3500))
+ax = fig.add_subplot(111, xlim=(min_dim, max_dim), ylim=(min_dim, max_dim))
 ax.set_aspect('equal')
 
 line, = ax.plot([], [], 'o-')
