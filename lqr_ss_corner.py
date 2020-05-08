@@ -3,6 +3,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import matplotlib.cm as cm
 
 import pydrake.symbolic as sym
 from pydrake.systems.analysis import Simulator
@@ -167,6 +168,7 @@ y_data = position_logger.data()[1, :]
 psi_data = position_logger.data()[2, :]
 
 vel_mag = (v_x_data**2 + v_y_data**2)**0.5
+max_vel = max(vel_mag)
 
 plt.figure()
 plt.subplot(311)
@@ -238,11 +240,14 @@ time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
 
 ax.set_aspect('equal')
 
-line, = ax.plot([], [], 'o-')
+line, = ax.plot([], [], 'o-', markeredgecolor='black',
+                markeredgewidth=1, markersize=30)
 time_template = 'time = %.1fs'
 time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
 
 dt = position_logger.sample_times()[7] - position_logger.sample_times()[6]
+
+cmap = cm.get_cmap('plasma')
 
 
 def init():
@@ -254,8 +259,14 @@ def init():
 def animate(i):
     thisx = [x_data[i]]
     thisy = [y_data[i]]
+    rgba = cmap(vel_mag[i]/max_vel)
+
+    # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right)
+    marker_angle = -psi_data[i]*180/np.pi
 
     line.set_data(thisx, thisy)
+    line.set_color(rgba)
+    line.set_marker((3, 0, marker_angle))
     time_text.set_text(time_template % (i*dt))
     return line, time_text
 
