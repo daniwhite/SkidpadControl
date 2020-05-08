@@ -3,12 +3,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-import pydrake.symbolic as sym
 
+import pydrake.symbolic as sym
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 from pydrake.all import LinearQuadraticRegulator
+
+# GLOBAL OPTIONS
+force_control = False
+input_type = "lqr"
+
+# Check options
+assert input_type in {"lqr", "fixed"}, "Input type invalid"
+assert not ((input_type != "fixed")
+            and force_control), "Force control input must be fixed"
 
 # Set up car parameters
 m = 276  # kg
@@ -40,8 +49,13 @@ y = sym.Variable("x5")
 psi = sym.Variable("x6")
 
 # Slip angles
-alpha_F = sym.atan2(v_y+l_F*r, v_x) - delta
-alpha_R = sym.atan2(v_y+l_F*r, v_x)
+if force_control:
+    # More inputs
+    alpha_F = sym.Variable("u4")
+    alpha_R = sym.Variable("u5")
+else:
+    alpha_F = sym.atan2(v_y+l_F*r, v_x) - delta
+    alpha_R = sym.atan2(v_y+l_F*r, v_x)
 
 plant_dynamics = [
     (sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)
@@ -52,9 +66,14 @@ plant_dynamics = [
          * S_FC*alpha_F) - l_R*S_RC*alpha_R
 ]
 
+if force_control:
+    plant_input = [kappa_F, kappa_R, alpha_F, alpha_R, delta]
+else:
+    plant_input = [kappa_F, kappa_R, delta]
+
 plant_vector_system = SymbolicVectorSystem(
     state=[v_x, v_y, r],
-    input=[kappa_F, kappa_R, delta],
+    input=plant_input,
     dynamics=plant_dynamics,
     output=[v_x, v_y, r])
 
@@ -70,20 +89,6 @@ position_system = SymbolicVectorSystem(
     dynamics=position_dynamics,
     output=[x, y, psi])
 
-v_bar = 300
-delta_bar = 0
-# In this edge case, it gets a nan when it divdes 0/0. However, since velocity is constant (and
-# since delta bar is zero, we are going straight), the kappa values should both be zero.
-if delta_bar == 0:
-    kappa_F_bar = 0
-    kappa_R_bar = 0
-else:
-    kappa_F_bar = S_FC*delta_bar/(np.tan(delta_bar)*S_FL)
-    kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
-        (1+1/np.tan(delta_bar)**2)
-x_bar = [v_bar, 0, 0]
-u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
-print(u_bar)
 
 # Set up plant and position
 builder = DiagramBuilder()
@@ -91,18 +96,43 @@ plant = builder.AddSystem(plant_vector_system)
 position = builder.AddSystem(position_system)
 builder.Connect(plant.get_output_port(0), position.get_input_port(0))
 
-# Set up LQR
-lqr_context = plant.CreateDefaultContext()
-plant.get_input_port(0).FixValue(lqr_context, u_bar)
-lqr_context.SetContinuousState(x_bar)
-Q = np.diag([1, 1, 1])
-R = np.diag([0.005, 0.005, 0.01])
-LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
+if input_type == "fixed":
+    builder.ExportInput(plant.get_input_port(0))
+elif input_type == "lqr":
+    v_bar = 300
+    delta_bar = 0.01
+    print("v_bar: {}\tdelta_bar: {}".format(v_bar, delta_bar))
 
-# Connect plant to LQR
-controller = builder.AddSystem(LQR_Controller)
-builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
-builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
+    # In this edge case, it gets a nan when it divdes 0/0. However, since velocity is constant (and
+    # since delta bar is zero, we are going straight), the kappa values should both be zero.
+    if delta_bar == 0:
+        kappa_F_bar = 0
+        kappa_R_bar = 0
+    else:
+        kappa_F_bar = S_FC*delta_bar/(np.tan(delta_bar)*S_FL)
+        kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
+            (1+1/np.tan(delta_bar)**2)
+
+    print("kappa_F_bar: {}\kappa_R_bar: {}".format(kappa_F_bar, kappa_R_bar))
+
+    x_bar = [v_bar, 0, 0]
+    u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
+
+    print("x_bar:", x_bar)
+    print("u_bar:", u_bar)
+
+    # Set up LQR
+    lqr_context = plant.CreateDefaultContext()
+    plant.get_input_port(0).FixValue(lqr_context, u_bar)
+    lqr_context.SetContinuousState(x_bar)
+    Q = np.diag([1, 1, 1])
+    R = np.diag([0.005, 0.005, 0.01])
+    LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
+
+    # Connect plant to LQR
+    controller = builder.AddSystem(LQR_Controller)
+    builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
+    builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
 
 # Set up logging
 plant_logger = LogOutput(plant.get_output_port(0), builder)
@@ -110,10 +140,23 @@ position_logger = LogOutput(position.get_output_port(0), builder)
 diagram = builder.Build()
 context = diagram.CreateDefaultContext()
 
+if input_type == "fixed":
+    # Initial conditions
+    x0 = [1, 0, 0, 0, 0, 0]
+    context.SetContinuousState(x0)
+
+    # Fix input
+    if force_control:
+        u = [1, 1, 0, 0, 0]
+    else:
+        u = [1, 1, 0]
+    print("Fixed u:", u)
+    inp = plant.get_input_port(0)
+    inp.FixValue(context, u)
 # Create the simulator, and simulate for 10 seconds.
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(0.001)
+simulator.AdvanceTo(1)
 
 # Plots
 v_x_data = plant_logger.data()[0, :]
@@ -128,19 +171,22 @@ vel_mag = (v_x_data**2 + v_y_data**2)**0.5
 plt.figure()
 plt.subplot(311)
 plt.plot(plant_logger.sample_times(), v_x_data)
-plt.axhline(x_bar[0], linestyle='--', color="gray")
+if input_type == "lqr":
+    plt.axhline(x_bar[0], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_x$(t)')
 
 plt.subplot(312)
 plt.plot(plant_logger.sample_times(), v_y_data)
-plt.axhline(x_bar[1], linestyle='--', color="gray")
+if input_type == "lqr":
+    plt.axhline(x_bar[1], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$v_y$(t)')
 
 plt.subplot(313)
 plt.plot(plant_logger.sample_times(), r_data)
-plt.axhline(x_bar[2], linestyle='--', color="gray")
+if input_type == "lqr":
+    plt.axhline(x_bar[2], linestyle='--', color="gray")
 plt.xlabel('$t$')
 plt.ylabel('$r(t)$')
 
