@@ -145,7 +145,8 @@ context = diagram.CreateDefaultContext()
 if input_type == "fixed":
     x0 = [1, 0, 0, 0, 0, 0]
 elif input_type == "lqr":
-    x0 = x_bar + [0, 0, 0]
+    # x0 = x_bar + [0, 0, 0]
+    x0 = [-300, 5, 1, 0, 0, 0]
 context.SetContinuousState(x0)
 
 if input_type == "fixed":
@@ -161,7 +162,7 @@ if input_type == "fixed":
 # Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(1)
+simulator.AdvanceTo(10)
 
 # Plots
 v_x_data = plant_logger.data()[0, :]
@@ -173,8 +174,8 @@ psi_data = position_logger.data()[2, :]
 
 print("Initial state:", (v_x_data[0], v_y_data[0], r_data[0]))
 
-vel_mag = (v_x_data**2 + v_y_data**2)**0.5
-max_vel = max(vel_mag)
+speed = (v_x_data**2 + v_y_data**2)**0.5
+max_speed = max(speed)
 
 plt.figure()
 plt.subplot(311)
@@ -214,16 +215,8 @@ plt.plot(position_logger.sample_times(), psi_data)
 plt.xlabel('$t$')
 plt.ylabel('$\\psi$')
 
-plt.figure()
-# psi=0 should point up, psi=pi/2 should point right
-plt.polar(np.pi/2-psi_data, position_logger.sample_times())
-plt.title("$90\\degree-\\psi$")
-
-plt.xlabel("$t$")
-plt.ylabel("$F_Y$")
-
-plt.figure()
-plt.plot(x_data, y_data)
+fig = plt.figure()
+plt.plot(x_data, y_data, color='gray', linestyle='--')
 plt.xlabel("$x$")
 plt.ylabel("$y$")
 left, right = plt.xlim()
@@ -233,24 +226,30 @@ max_dim = max(top, right)
 plt.xlim(min_dim, max_dim)
 plt.ylim(min_dim, max_dim)
 
-fig = plt.figure()
-ax = fig.add_subplot(111, xlim=(min_dim, max_dim), ylim=(min_dim, max_dim))
-ax.set_aspect('equal')
+# Add random points off screen just for the colorbar
+cmap = cm.get_cmap('plasma')
+plt.scatter([-min_dim*50, -min_dim*50], [-min_dim*50, -min_dim*50],
+            c=[0, max_speed], cmap=cmap)
+cb = plt.colorbar()
+cb.set_label("Speed")
 
-line, = ax.plot([], [], 'o-')
-time_template = 'time = %.1fs'
-time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
+# Interpolate to a consistent time
+dt = 20e-3
+print("dt:", dt)
+even_t = np.arange(position_logger.sample_times()[
+                   0], position_logger.sample_times()[-1], dt)
+x_data_even_t = np.interp(even_t, position_logger.sample_times(), x_data)
+y_data_even_t = np.interp(even_t, position_logger.sample_times(), y_data)
+psi_data_even_t = np.interp(even_t, position_logger.sample_times(), psi_data)
+speed_data_even_t = np.interp(even_t, plant_logger.sample_times(), speed)
 
+ax = plt.gca()
 ax.set_aspect('equal')
 
 line, = ax.plot([], [], 'o-', markeredgecolor='black',
                 markeredgewidth=1, markersize=30)
 time_template = 'time = %.1fs'
-time_text = ax.text(0.05, 0.9, '', transform=ax.transAxes)
-
-dt = position_logger.sample_times()[7] - position_logger.sample_times()[6]
-
-cmap = cm.get_cmap('plasma')
+time_text = ax.text(0.7, 0.9, '', transform=ax.transAxes)
 
 
 def init():
@@ -260,20 +259,22 @@ def init():
 
 
 def animate(i):
-    thisx = [x_data[i]]
-    thisy = [y_data[i]]
-    rgba = cmap(vel_mag[i]/max_vel)
+    thisx = [x_data_even_t[i]]
+    thisy = [y_data_even_t[i]]
+    rgba = cmap(speed_data_even_t[i]/max_speed)
 
     # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right)
-    marker_angle = -psi_data[i]*180/np.pi
+    marker_angle = -psi_data_even_t[i]*180/np.pi
 
     line.set_data(thisx, thisy)
     line.set_color(rgba)
     line.set_marker((3, 0, marker_angle))
-    time_text.set_text(time_template % (i*dt))
+    new_time = dt*i
+    time_text.set_text(time_template % new_time)
     return line, time_text
 
 
-ani = animation.FuncAnimation(fig, animate, range(1, len(y_data)),
-                              interval=dt*1000, blit=True, init_func=init)
+ani = animation.FuncAnimation(fig, animate, range(
+    1, len(even_t)), interval=dt, blit=True, init_func=init)
+
 plt.show()
