@@ -154,7 +154,8 @@ if input_type == "fixed":
     print("Fixed u:", u)
     inp = plant.get_input_port(0)
     inp.FixValue(context, u)
-# Create the simulator, and simulate for 10 seconds.
+
+# Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
 simulator.AdvanceTo(1)
@@ -166,6 +167,8 @@ r_data = plant_logger.data()[2, :]
 x_data = position_logger.data()[0, :]
 y_data = position_logger.data()[1, :]
 psi_data = position_logger.data()[2, :]
+
+print("Initial state:", (v_x_data[0], v_y_data[0], r_data[0]))
 
 vel_mag = (v_x_data**2 + v_y_data**2)**0.5
 max_vel = max(vel_mag)
@@ -217,12 +220,9 @@ plt.xlabel("$t$")
 plt.ylabel("$F_Y$")
 
 plt.figure()
-plt.scatter(x_data, y_data, c=vel_mag, marker=(
-    3, 0, -psi_data[-1]*180/np.pi))  # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right
+plt.plot(x_data, y_data)
 plt.xlabel("$x$")
 plt.ylabel("$y$")
-cb = plt.colorbar()
-cb.set_label("Speed")
 left, right = plt.xlim()
 bot, top = plt.ylim()
 min_dim = min(left, bot)
