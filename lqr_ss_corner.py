@@ -113,7 +113,7 @@ elif input_type == "lqr":
         kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
             (1+1/np.tan(delta_bar)**2)
 
-    print("kappa_F_bar: {}\kappa_R_bar: {}".format(kappa_F_bar, kappa_R_bar))
+    print("kappa_F_bar: {}\\kappa_R_bar: {}".format(kappa_F_bar, kappa_R_bar))
 
     x_bar = [v_bar, 0, 0]
     u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
