@@ -141,11 +141,14 @@ position_logger = LogOutput(position.get_output_port(0), builder)
 diagram = builder.Build()
 context = diagram.CreateDefaultContext()
 
+# Initial conditions
 if input_type == "fixed":
-    # Initial conditions
     x0 = [1, 0, 0, 0, 0, 0]
-    context.SetContinuousState(x0)
+elif input_type == "lqr":
+    x0 = x_bar + [0, 0, 0]
+context.SetContinuousState(x0)
 
+if input_type == "fixed":
     # Fix input
     if force_control:
         u = [1, 1, 0, 0, 0]
