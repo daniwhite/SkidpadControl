@@ -12,13 +12,12 @@ from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 from pydrake.all import LinearQuadraticRegulator
 
 # GLOBAL OPTIONS
-force_control = False
 input_type = "fixed"
+fixed_input_type = "force"
 
 # Check options
 assert input_type in {"lqr", "fixed"}, "Input type invalid"
-assert not ((input_type != "fixed")
-            and force_control), "Force control input must be fixed"
+assert fixed_input_type in {"slip_angle", "force", "standard"}
 
 # Set up car parameters
 m = 276  # kg
@@ -50,7 +49,7 @@ beta = sym.Variable("x5")
 beta_dot = sym.Variable("x6")
 
 # Slip angles
-if force_control:
+if input_type == "fixed" and fixed_input_type == "slip_angle":
     # More inputs
     alpha_F = sym.Variable("u4")
     alpha_R = sym.Variable("u5")
@@ -58,12 +57,19 @@ else:
     alpha_F = beta - delta
     alpha_R = beta
 
-F_xf = sym.cos(delta)*S_FL*kappa_F - sym.sin(delta) * S_FC*alpha_F
-F_xr = S_RL*kappa_R
-F_x = F_xf + F_xr
+if input_type == "fixed" and fixed_input_type == "force":
+    F_xf = sym.Variable("u4")
+    F_xr = sym.Variable("u5")
+    F_yf = sym.Variable("u6")
+    F_yr = sym.Variable("u7")
+    F_yr = sym.Variable("u7")
+else:
+    F_xf = sym.cos(delta)*S_FL*kappa_F - sym.sin(delta) * S_FC*alpha_F
+    F_xr = S_RL*kappa_R
+    F_yf = sym.sin(delta)*S_FL*kappa_F + sym.cos(delta) * S_FC*alpha_F
+    F_yr = S_RC*alpha_R
 
-F_yf = sym.sin(delta)*S_FL*kappa_F + sym.cos(delta) * S_FC*alpha_F
-F_yr = S_RC*alpha_R
+F_x = F_xf + F_xr
 F_y = F_yr + F_yf
 
 plant_state = [
@@ -84,8 +90,11 @@ plant_dynamics = [
     theta_ddot - (l_F*F_yf-l_R*F_yr)/Iz
 ]
 
-if force_control:
-    plant_input = [kappa_F, kappa_R, alpha_F, alpha_R, delta]
+if input_type == "fixed" and fixed_input_type != "standard":
+    if fixed_input_type == "slip_angle":
+        plant_input = [kappa_F, kappa_R, alpha_F, alpha_R, delta]
+    elif fixed_input_type == "force":
+        plant_input = [F_xf, F_xr, F_yf, F_yr]
 else:
     plant_input = [kappa_F, kappa_R, delta]
 
@@ -103,7 +112,6 @@ position_system = SymbolicVectorSystem(
     input=plant_state,
     dynamics=position_dynamics,
     output=position_state)
-
 
 # Set up plant and position
 builder = DiagramBuilder()
@@ -158,12 +166,12 @@ context = diagram.CreateDefaultContext()
 # Initial conditions
 if input_type == "fixed":
     x0 = [0] * len(plant_state) + [0] * len(position_state)
-    x0[0] = 5  # r
+    x0[0] = 1  # r
     x0[1] = 0  # r dot
-    x0[2] = -0.1  # theta dot
+    x0[2] = 5  # theta dot
     x0[3] = 0  # beta
     x0[4] = 0  # beta  dot
-    x0[5] = 0.5  # theta
+    x0[5] = 0  # theta
 elif input_type == "lqr":
     # x0 = x_bar + [0, 0, 0]
     x0 = [-300, 5, 1, 0, 0, 0]
@@ -171,9 +179,11 @@ context.SetContinuousState(x0)
 
 if input_type == "fixed":
     # Fix input
-    if force_control:
+    if fixed_input_type == "slip_angle":
         u = [0, 0, 0.1, 0.1, 0]
-    else:
+    elif fixed_input_type == "force":
+        u = [10, 10, 10, 10]
+    elif fixed_input_type == "standard":
         u = [1, -1, 0]
     print("Fixed u:", u)
     inp = plant.get_input_port(0)
