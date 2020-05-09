@@ -78,9 +78,12 @@ plant_vector_system = SymbolicVectorSystem(
     dynamics=plant_dynamics,
     output=[v_x, v_y, r])
 
+beta = sym.atan2(v_y, v_x)
+V = sym.sqrt(v_y**2+v_x**2)
+
 position_dynamics = [
-    v_y*sym.cos(psi) - v_x*sym.sin(psi),
-    v_y*sym.sin(psi) + v_x*sym.cos(psi),
+    V*sym.cos(beta + psi),
+    V*sym.sin(beta + psi),
     r
 ]
 
@@ -235,13 +238,19 @@ cb.set_label("Speed")
 
 # Interpolate to a consistent time
 dt = 20e-3
+time_scaler = 0.1
 print("dt:", dt)
 even_t = np.arange(position_logger.sample_times()[
-                   0], position_logger.sample_times()[-1], dt)
-x_data_even_t = np.interp(even_t, position_logger.sample_times(), x_data)
-y_data_even_t = np.interp(even_t, position_logger.sample_times(), y_data)
-psi_data_even_t = np.interp(even_t, position_logger.sample_times(), psi_data)
-speed_data_even_t = np.interp(even_t, plant_logger.sample_times(), speed)
+                   0], position_logger.sample_times()[-1], dt*time_scaler)
+x_data_even_t = np.interp(
+    even_t, position_logger.sample_times(), x_data)
+y_data_even_t = np.interp(
+    even_t, position_logger.sample_times(), y_data)
+psi_data_even_t = np.interp(
+    even_t, position_logger.sample_times(), psi_data)
+speed_data_even_t = np.interp(
+    even_t, plant_logger.sample_times(), speed)
+# even_t *= time_scaler
 
 ax = plt.gca()
 ax.set_aspect('equal')
@@ -264,12 +273,12 @@ def animate(i):
     rgba = cmap(speed_data_even_t[i]/max_speed)
 
     # Same transform as polar, except -90 because thats the rotation for the triangel to point to the right)
-    marker_angle = -psi_data_even_t[i]*180/np.pi
+    marker_angle = psi_data_even_t[i]*180/np.pi - 90
 
     line.set_data(thisx, thisy)
     line.set_color(rgba)
     line.set_marker((3, 0, marker_angle))
-    new_time = dt*i
+    new_time = even_t[i]
     time_text.set_text(time_template % new_time)
     return line, time_text
 
