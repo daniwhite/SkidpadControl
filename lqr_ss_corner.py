@@ -12,8 +12,8 @@ from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 from pydrake.all import LinearQuadraticRegulator
 
 # GLOBAL OPTIONS
-force_control = False
-input_type = "lqr"
+force_control = True
+input_type = "fixed"
 
 # Check options
 assert input_type in {"lqr", "fixed"}, "Input type invalid"
@@ -146,7 +146,7 @@ context = diagram.CreateDefaultContext()
 
 # Initial conditions
 if input_type == "fixed":
-    x0 = [1, 0, 0, 0, 0, 0]
+    x0 = [300, 0, 5, 0, 0, 0]
 elif input_type == "lqr":
     # x0 = x_bar + [0, 0, 0]
     x0 = [-300, 5, 1, 0, 0, 0]
@@ -155,7 +155,7 @@ context.SetContinuousState(x0)
 if input_type == "fixed":
     # Fix input
     if force_control:
-        u = [1, 1, 0, 0, 0]
+        u = [0, 0, 0, 0, 0]
     else:
         u = [1, 1, 0]
     print("Fixed u:", u)
