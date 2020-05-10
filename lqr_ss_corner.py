@@ -22,7 +22,6 @@ assert fixed_input_type in {"slip_angle", "force", "standard"}
 # Set up car parameters
 m = 276  # kg
 Iz = 180.49  # kg*m^2
-# Changed to be neutral steer
 RWB = 0.583
 l_R = RWB*60*0.0254  # m
 l_F = (1-RWB)*60*0.0254  # m
@@ -48,14 +47,19 @@ theta_dot = sym.Variable("x4")
 beta = sym.Variable("x5")
 beta_dot = sym.Variable("x6")
 
+# v = r_dot r_hat + r theta_dot theta_hat
+v_r_hat = r_dot
+v_theta_hat = r*theta_dot
+gamma = sym.atan2(v_r_hat, v_theta_hat)
+
 # Slip angles
 if input_type == "fixed" and fixed_input_type == "slip_angle":
     # More inputs
     alpha_F = sym.Variable("u4")
     alpha_R = sym.Variable("u5")
 else:
-    alpha_F = beta - delta
-    alpha_R = beta
+    alpha_F = beta - delta - gamma
+    alpha_R = beta - gamma
 
 if input_type == "fixed" and fixed_input_type == "force":
     F_xf = sym.Variable("u4")
@@ -192,8 +196,8 @@ elif input_type == "lqr":
     lqr_context = plant.CreateDefaultContext()
     plant.get_input_port(0).FixValue(lqr_context, u_bar)
     lqr_context.SetContinuousState(x_bar)
-    Q = np.diag([1, 1, 1, 1, 1])
-    R = np.diag([0.005, 0.005, 0.01])
+    Q = np.diag([1, 100, 100, 1, 1])
+    R = np.diag([0.5, 0.5, 0.1])
     LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
 
     # Connect plant to LQR
@@ -210,22 +214,29 @@ context = diagram.CreateDefaultContext()
 # Initial conditions
 if input_type == "fixed":
     x0 = [0] * len(plant_state) + [0] * len(position_state)
-    x0[0] = 1  # r
+    x0[0] = 5  # r
     x0[1] = 0  # r dot
-    x0[2] = 5  # theta dot
+    x0[2] = -0.1  # theta dot
     x0[3] = 0  # beta
     x0[4] = 0  # beta  dot
     x0[5] = 0  # theta
 elif input_type == "lqr":
-    x0 = x_bar + [0]
+    # x0 = x_bar + [0]
+    x0 = [0] * len(plant_state) + [0] * len(position_state)
+    x0[0] = r_bar - 1  # r
+    x0[1] = 0  # r dot
+    x0[2] = omega_bar  # theta dot
+    x0[3] = beta_bar  # beta
+    x0[4] = 0  # beta  dot
+    x0[5] = 0  # theta
 context.SetContinuousState(x0)
 
 if input_type == "fixed":
     # Fix input
     if fixed_input_type == "slip_angle":
-        u = [0, 0, 0.1, 0.1, 0]
+        u = [0, 0, 1, 1, 0]
     elif fixed_input_type == "force":
-        u = [10, 10, 10, 10]
+        u = [100, 100, 100, 100]
     elif fixed_input_type == "standard":
         u = [1, -1, 0]
     print("Fixed u:", u)
@@ -235,7 +246,7 @@ if input_type == "fixed":
 # Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(25)
+simulator.AdvanceTo(5)
 
 plant_state = [
     r,
@@ -257,7 +268,7 @@ plt.subplot(321)
 plt.plot(plant_logger.sample_times(), r_data)
 if input_type == "lqr":
     plt.axhline(r_bar, color='gray', linestyle='--')
-    plt.ylim(0, 2*r_bar)
+    # plt.ylim(0.*r_bar, r_bar*1.05)
 plt.xlabel("$t$")
 plt.ylabel("$r$")
 
@@ -265,7 +276,7 @@ plt.subplot(322)
 plt.plot(plant_logger.sample_times(), r_dot_data)
 if input_type == "lqr":
     plt.axhline(0, color='gray', linestyle='--')
-    plt.ylim(-5, 5)
+    # plt.ylim(-5, 5)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot r$")
 
@@ -278,7 +289,7 @@ plt.subplot(324)
 plt.plot(plant_logger.sample_times(), theta_dot_data)
 if input_type == "lqr":
     plt.axhline(omega_bar, color='gray', linestyle='--')
-    plt.ylim(0, 2*omega_bar)
+    # plt.ylim(0, 2*omega_bar)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot\theta$")
 
@@ -286,7 +297,7 @@ plt.subplot(325)
 plt.plot(position_logger.sample_times(), beta_data)
 if input_type == "lqr":
     plt.axhline(beta_bar, color='gray', linestyle='--')
-    plt.ylim(2*beta_bar, 0)
+    # plt.ylim(-2, 1)
 plt.xlabel("$t$")
 plt.ylabel(r"$\beta$")
 
@@ -294,7 +305,7 @@ plt.subplot(326)
 plt.plot(plant_logger.sample_times(), beta_dot_data)
 if input_type == "lqr":
     plt.axhline(0, color='gray', linestyle='--')
-    plt.ylim(-5, 5)
+    # plt.ylim(-5, 5)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot\beta$")
 
@@ -320,10 +331,12 @@ plt.ylim(min_dim, max_dim)
 
 # Add random points off screen just for the colorbar
 cmap = cm.get_cmap('plasma')
-plt.scatter([-min_dim*50, -min_dim*50], [-min_dim*50, -min_dim*50],
-            c=[0, max_speed], cmap=cmap)
-cb = plt.colorbar()
-cb.set_label("Speed")
+if max_speed > 0:
+    coord = -abs(min_dim)*50 - 10e6
+    plt.scatter([coord, coord], [coord, coord],
+                c=[0, max_speed], cmap=cmap)
+    cb = plt.colorbar()
+    cb.set_label("Speed")
 
 # Interpolate to a consistent time
 dt = 20e-3
@@ -364,7 +377,10 @@ def animate(i):
     thisy = [y_data_even_t[i]]
     this_theta = theta_data_even_t[i]
     this_beta = beta_data_even_t[i]
-    rgba = cmap(speed_data_even_t[i]/max_speed)
+    if max_speed > 0:
+        rgba = cmap(speed_data_even_t[i]/max_speed)
+    else:
+        rgba = cmap(0)
 
     # uses same formula for psi, except without the pi/2
     marker_angle = this_theta - this_beta
