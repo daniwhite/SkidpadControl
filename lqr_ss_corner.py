@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.cm as cm
+import scipy.optimize
 
 import pydrake.symbolic as sym
 from pydrake.systems.analysis import Simulator
@@ -33,6 +34,15 @@ S_RL = 1e4
 # Cornering stiffness guessed using tire forces ~ 1000 N, slip angle ~ 1
 S_FC = 1e3
 S_RC = 1e3
+
+
+def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
+    """"Helper function that will be used with brentq to find beta_ bar"""
+    ret = (l_F + l_R)*S_RC*beta_bar
+    ret /= l_F
+    ret += m*r_bar*omega_bar**2*np.cos(beta_bar)
+    return ret
+
 
 # Inputs
 kappa_F = sym.Variable("u1")
@@ -94,34 +104,6 @@ plant_dynamics = [
     theta_ddot - (l_F*F_yf-l_R*F_yr)/Iz
 ]
 
-
-def get_dynamics(u_, x_):
-    r_, r_dot_, theta_dot_, beta_, beta_dot_ = x_
-    kappa_F_, kappa_R_, delta_ = u_
-
-    alpha_F_ = beta_ - delta_
-    alpha_R_ = beta_
-
-    F_xf_ = np.cos(delta_)*S_FL*kappa_F_ - np.sin(delta_) * S_FC*alpha_F_
-    F_xr_ = S_RL*kappa_R_
-    F_yf_ = np.sin(delta_)*S_FL*kappa_F_ + np.cos(delta_) * S_FC*alpha_F_
-    F_yr_ = S_RC*alpha_R_
-
-    F_x_ = F_xf_ + F_xr_
-    F_y_ = F_yr_ + F_yf_
-
-    theta_ddot_ = (F_x_*np.cos(beta_) - F_y_*np.sin(beta_)) / \
-        (m*r_) - 2*r_dot_ * theta_dot_/r_
-
-    return [
-        r_dot_,
-        (F_x_*np.sin(beta_) + F_y_*np.cos(beta_))/m + r_*theta_dot_**2,
-        theta_ddot_,
-        beta_dot_,
-        theta_ddot_ - (l_F*F_yf_-l_R*F_yr_)/Iz
-    ]
-
-
 if input_type == "fixed" and fixed_input_type != "standard":
     if fixed_input_type == "slip_angle":
         plant_input = [kappa_F, kappa_R, alpha_F, alpha_R, delta]
@@ -154,26 +136,27 @@ builder.Connect(plant.get_output_port(0), position.get_input_port(0))
 if input_type == "fixed":
     builder.ExportInput(plant.get_input_port(0))
 elif input_type == "lqr":
-    r_bar = 20
-    beta_bar = -0.005
+    r_bar = 20.0
     delta_bar = 0.01
-    print("r_bar: {}\tbeta_bar: {}\tdelta_bar: {}".format(
-        r_bar, beta_bar, delta_bar))
+    omega_bar = 0.01
+
+    print("      r_bar: {:.2f}\tomega_bar: {}\tdelta_bar: {}".format(
+        r_bar, omega_bar, delta_bar))
+
+    # Solve for beta_bar numerically
+    beta_bar = scipy.optimize.brentq(
+        get_ss_yaw_moment, -np.pi/2, 0, args=(omega_bar, r_bar))
 
     alpha_R_bar = beta_bar
     alpha_F_bar = beta_bar - delta_bar
-    omega_bar = -(l_R + l_F)*S_RC*beta_bar
-    omega_bar /= m*l_F*r_bar*np.cos(beta_bar)
-    omega_bar = np.sqrt(omega_bar)
-    # omega_bar = 5
 
-    print("alpha_R_bar: {}\alpha_F_bar: {}\omega_bar: {}".format(
-        alpha_R_bar, alpha_F_bar, omega_bar))
+    print("alpha_R_bar: {:.6f}\talpha_F_bar: {:.6f}\t beta_bar: {:.6f}".format(
+        alpha_R_bar, alpha_F_bar, beta_bar))
 
     F_x_bar = -m*r_bar*omega_bar**2*np.sin(beta_bar)
     F_y_bar = -m*r_bar*omega_bar**2*np.cos(beta_bar)
 
-    print("F_x_bar: {}\tF_y_bar: {}".format(F_x_bar, F_y_bar))
+    print("F_x_bar: {:.5f}\tF_y_bar: {:.5f}".format(F_x_bar, F_y_bar))
 
     kappa_F_bar = -(S_RC * alpha_R_bar +
                     S_FC*alpha_F_bar*np.cos(delta_bar)
@@ -182,15 +165,14 @@ elif input_type == "lqr":
                     - S_FC*alpha_F_bar*np.sin(delta_bar)
                     - F_x_bar)/S_RL
 
-    print("kappa_F_bar: {}\\kappa_R_bar: {}".format(kappa_F_bar, kappa_R_bar))
+    print("kappa_F_bar: {:.2f}\\kappa_R_bar: {:.2f}".format(
+        kappa_F_bar, kappa_R_bar))
 
     x_bar = [r_bar, 0, omega_bar, beta_bar, 0]
     u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
 
-    print("x_bar:", x_bar)
-    print("u_bar:", u_bar)
-
-    print("dynamics:", get_dynamics(u_bar, x_bar))
+    print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
+    print("u_bar: [" + ("{:.5f}, "*len(u_bar)).format(*u_bar)[:-2] + "]")
 
     # Set up LQR
     lqr_context = plant.CreateDefaultContext()
@@ -223,7 +205,7 @@ if input_type == "fixed":
 elif input_type == "lqr":
     # x0 = x_bar + [0]
     x0 = [0] * len(plant_state) + [0] * len(position_state)
-    x0[0] = r_bar - 1  # r
+    x0[0] = r_bar  # - 10  # r
     x0[1] = 0  # r dot
     x0[2] = omega_bar  # theta dot
     x0[3] = beta_bar  # beta
