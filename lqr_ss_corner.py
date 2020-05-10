@@ -12,8 +12,8 @@ from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 from pydrake.all import LinearQuadraticRegulator
 
 # GLOBAL OPTIONS
-input_type = "fixed"
-fixed_input_type = "force"
+input_type = "lqr"
+fixed_input_type = "standard"
 
 # Check options
 assert input_type in {"lqr", "fixed"}, "Input type invalid"
@@ -23,9 +23,9 @@ assert fixed_input_type in {"slip_angle", "force", "standard"}
 m = 276  # kg
 Iz = 180.49  # kg*m^2
 # Changed to be neutral steer
-RWB = 0.5  # 0.583
-l_F = RWB*60*0.0254  # m
-l_R = (1-RWB)*60*0.0254  # m
+RWB = 0.583
+l_R = RWB*60*0.0254  # m
+l_F = (1-RWB)*60*0.0254  # m
 
 # Hand-wavy tire parameters
 # Longitudinal stiffness guessed using tire forces ~ 1000 N, slip ratio ~ 0.1 -> 1000/0.1=1e4
@@ -64,9 +64,9 @@ if input_type == "fixed" and fixed_input_type == "force":
     F_yr = sym.Variable("u7")
     F_yr = sym.Variable("u7")
 else:
-    F_xf = sym.cos(delta)*S_FL*kappa_F - sym.sin(delta) * S_FC*alpha_F
+    F_xf = sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)*S_FC*alpha_F
     F_xr = S_RL*kappa_R
-    F_yf = sym.sin(delta)*S_FL*kappa_F + sym.cos(delta) * S_FC*alpha_F
+    F_yf = sym.sin(delta)*S_FL*kappa_F + sym.cos(delta)*S_FC*alpha_F
     F_yr = S_RC*alpha_R
 
 F_x = F_xf + F_xr
@@ -89,6 +89,34 @@ plant_dynamics = [
     beta_dot,
     theta_ddot - (l_F*F_yf-l_R*F_yr)/Iz
 ]
+
+
+def get_dynamics(u_, x_):
+    r_, r_dot_, theta_dot_, beta_, beta_dot_ = x_
+    kappa_F_, kappa_R_, delta_ = u_
+
+    alpha_F_ = beta_ - delta_
+    alpha_R_ = beta_
+
+    F_xf_ = np.cos(delta_)*S_FL*kappa_F_ - np.sin(delta_) * S_FC*alpha_F_
+    F_xr_ = S_RL*kappa_R_
+    F_yf_ = np.sin(delta_)*S_FL*kappa_F_ + np.cos(delta_) * S_FC*alpha_F_
+    F_yr_ = S_RC*alpha_R_
+
+    F_x_ = F_xf_ + F_xr_
+    F_y_ = F_yr_ + F_yf_
+
+    theta_ddot_ = (F_x_*np.cos(beta_) - F_y_*np.sin(beta_)) / \
+        (m*r_) - 2*r_dot_ * theta_dot_/r_
+
+    return [
+        r_dot_,
+        (F_x_*np.sin(beta_) + F_y_*np.cos(beta_))/m + r_*theta_dot_**2,
+        theta_ddot_,
+        beta_dot_,
+        theta_ddot_ - (l_F*F_yf_-l_R*F_yr_)/Iz
+    ]
+
 
 if input_type == "fixed" and fixed_input_type != "standard":
     if fixed_input_type == "slip_angle":
@@ -122,33 +150,49 @@ builder.Connect(plant.get_output_port(0), position.get_input_port(0))
 if input_type == "fixed":
     builder.ExportInput(plant.get_input_port(0))
 elif input_type == "lqr":
-    v_bar = 300
+    r_bar = 20
+    beta_bar = -0.005
     delta_bar = 0.01
-    print("v_bar: {}\tdelta_bar: {}".format(v_bar, delta_bar))
+    print("r_bar: {}\tbeta_bar: {}\tdelta_bar: {}".format(
+        r_bar, beta_bar, delta_bar))
 
-    # In this edge case, it gets a nan when it divdes 0/0. However, since velocity is constant (and
-    # since delta bar is zero, we are going straight), the kappa values should both be zero.
-    if delta_bar == 0:
-        kappa_F_bar = 0
-        kappa_R_bar = 0
-    else:
-        kappa_F_bar = S_FC*delta_bar/(np.tan(delta_bar)*S_FL)
-        kappa_R_bar = -np.sin(delta_bar)*delta_bar*(S_FC/S_RL) * \
-            (1+1/np.tan(delta_bar)**2)
+    alpha_R_bar = beta_bar
+    alpha_F_bar = beta_bar - delta_bar
+    omega_bar = -(l_R + l_F)*S_RC*beta_bar
+    omega_bar /= m*l_F*r_bar*np.cos(beta_bar)
+    omega_bar = np.sqrt(omega_bar)
+    # omega_bar = 5
+
+    print("alpha_R_bar: {}\alpha_F_bar: {}\omega_bar: {}".format(
+        alpha_R_bar, alpha_F_bar, omega_bar))
+
+    F_x_bar = -m*r_bar*omega_bar**2*np.sin(beta_bar)
+    F_y_bar = -m*r_bar*omega_bar**2*np.cos(beta_bar)
+
+    print("F_x_bar: {}\tF_y_bar: {}".format(F_x_bar, F_y_bar))
+
+    kappa_F_bar = -(S_RC * alpha_R_bar +
+                    S_FC*alpha_F_bar*np.cos(delta_bar)
+                    - F_y_bar)/(S_FL*np.sin(delta_bar))
+    kappa_R_bar = -(S_FL*kappa_F_bar*np.cos(delta_bar)
+                    - S_FC*alpha_F_bar*np.sin(delta_bar)
+                    - F_x_bar)/S_RL
 
     print("kappa_F_bar: {}\\kappa_R_bar: {}".format(kappa_F_bar, kappa_R_bar))
 
-    x_bar = [v_bar, 0, 0]
+    x_bar = [r_bar, 0, omega_bar, beta_bar, 0]
     u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
 
     print("x_bar:", x_bar)
     print("u_bar:", u_bar)
 
+    print("dynamics:", get_dynamics(u_bar, x_bar))
+
     # Set up LQR
     lqr_context = plant.CreateDefaultContext()
     plant.get_input_port(0).FixValue(lqr_context, u_bar)
     lqr_context.SetContinuousState(x_bar)
-    Q = np.diag([1, 1, 1])
+    Q = np.diag([1, 1, 1, 1, 1])
     R = np.diag([0.005, 0.005, 0.01])
     LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
 
@@ -173,8 +217,7 @@ if input_type == "fixed":
     x0[4] = 0  # beta  dot
     x0[5] = 0  # theta
 elif input_type == "lqr":
-    # x0 = x_bar + [0, 0, 0]
-    x0 = [-300, 5, 1, 0, 0, 0]
+    x0 = x_bar + [0]
 context.SetContinuousState(x0)
 
 if input_type == "fixed":
@@ -192,7 +235,7 @@ if input_type == "fixed":
 # Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(10)
+simulator.AdvanceTo(25)
 
 plant_state = [
     r,
