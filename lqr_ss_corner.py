@@ -255,79 +255,57 @@ theta_data = position_logger.data()[0, :]
 plt.figure()
 plt.subplot(321)
 plt.plot(plant_logger.sample_times(), r_data)
+if input_type == "lqr":
+    plt.axhline(r_bar, color='gray', linestyle='--')
+    plt.ylim(0, 2*r_bar)
 plt.xlabel("$t$")
 plt.ylabel("$r$")
 
 plt.subplot(322)
 plt.plot(plant_logger.sample_times(), r_dot_data)
+if input_type == "lqr":
+    plt.axhline(0, color='gray', linestyle='--')
+    plt.ylim(-5, 5)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot r$")
 
 plt.subplot(323)
 plt.plot(position_logger.sample_times(), theta_data)
 plt.xlabel("$t$")
-plt.ylabel("$\theta$")
+plt.ylabel(r"$\theta$")
 
 plt.subplot(324)
 plt.plot(plant_logger.sample_times(), theta_dot_data)
+if input_type == "lqr":
+    plt.axhline(omega_bar, color='gray', linestyle='--')
+    plt.ylim(0, 2*omega_bar)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot\theta$")
 
 plt.subplot(325)
 plt.plot(position_logger.sample_times(), beta_data)
+if input_type == "lqr":
+    plt.axhline(beta_bar, color='gray', linestyle='--')
+    plt.ylim(2*beta_bar, 0)
 plt.xlabel("$t$")
 plt.ylabel(r"$\beta$")
 
 plt.subplot(326)
 plt.plot(plant_logger.sample_times(), beta_dot_data)
+if input_type == "lqr":
+    plt.axhline(0, color='gray', linestyle='--')
+    plt.ylim(-5, 5)
 plt.xlabel("$t$")
 plt.ylabel(r"$\dot\beta$")
 
-# print("Initial state:", (v_x_data[0], v_y_data[0], r_data[0]))
-
-# speed=(v_x_data**2 + v_y_data**2)**0.5
-# max_speed=max(speed)
-
-# plt.figure()
-# plt.subplot(311)
-# plt.plot(plant_logger.sample_times(), v_x_data)
-# if input_type == "lqr":
-#     plt.axhline(x_bar[0], linestyle = '--', color = "gray")
-# plt.xlabel('$t$')
-# plt.ylabel('$v_x$(t)')
-
-# plt.subplot(312)
-# plt.plot(plant_logger.sample_times(), v_y_data)
-# if input_type == "lqr":
-#     plt.axhline(x_bar[1], linestyle = '--', color = "gray")
-# plt.xlabel('$t$')
-# plt.ylabel('$v_y$(t)')
-
-# plt.subplot(313)
-# plt.plot(plant_logger.sample_times(), r_data)
-# if input_type == "lqr":
-#     plt.axhline(x_bar[2], linestyle = '--', color = "gray")
-# plt.xlabel('$t$')
-# plt.ylabel('$r(t)$')
-
-# plt.figure()
-# plt.subplot(311)
-# plt.plot(position_logger.sample_times(), x_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$x$(t)')
-
-# plt.subplot(312)
-# plt.plot(position_logger.sample_times(), y_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$y$(t)')
-
-# plt.subplot(313)
-# plt.plot(position_logger.sample_times(), psi_data)
-# plt.xlabel('$t$')
-# plt.ylabel('$\\psi$')
-
 x_data = r_data * np.cos(theta_data)
 y_data = r_data * np.sin(theta_data)
+
+# v = r_dot r_hat + r theta_dot theta_hat
+speed_r_hat = r_dot_data
+speed_theta_hat = r_data*theta_dot_data
+speed = np.sqrt(speed_r_hat**2 + speed_theta_hat**2)
+max_speed = max(speed)
 
 fig = plt.figure()
 plt.plot(x_data, y_data, color='gray', linestyle='--')
@@ -340,12 +318,12 @@ max_dim = max(top, right)
 plt.xlim(min_dim, max_dim)
 plt.ylim(min_dim, max_dim)
 
-# # Add random points off screen just for the colorbar
-# cmap=cm.get_cmap('plasma')
-# plt.scatter([-min_dim*50, -min_dim*50], [-min_dim*50, -min_dim*50],
-#             c = [0, max_speed], cmap = cmap)
-# cb=plt.colorbar()
-# cb.set_label("Speed")
+# Add random points off screen just for the colorbar
+cmap = cm.get_cmap('plasma')
+plt.scatter([-min_dim*50, -min_dim*50], [-min_dim*50, -min_dim*50],
+            c=[0, max_speed], cmap=cmap)
+cb = plt.colorbar()
+cb.set_label("Speed")
 
 # Interpolate to a consistent time
 dt = 20e-3
@@ -361,13 +339,10 @@ theta_data_even_t = np.interp(
     even_t, position_logger.sample_times(), theta_data)
 beta_data_even_t = np.interp(
     even_t, plant_logger.sample_times(), beta_data)
-# psi_data_even_t = np.interp(
-#     even_t, position_logger.sample_times(), psi_data)
-# speed_data_even_t = np.interp(
-#     even_t, plant_logger.sample_times(), speed)
-# even_t *= time_scaler
-plt.axhline(0, color='black')
-plt.axvline(0, color='black')
+speed_data_even_t = np.interp(
+    even_t, plant_logger.sample_times(), speed)
+
+plt.grid(True)
 
 ax = plt.gca()
 ax.set_aspect('equal')
@@ -389,7 +364,7 @@ def animate(i):
     thisy = [y_data_even_t[i]]
     this_theta = theta_data_even_t[i]
     this_beta = beta_data_even_t[i]
-    # rgba = cmap(speed_data_even_t[i]/max_speed)
+    rgba = cmap(speed_data_even_t[i]/max_speed)
 
     # uses same formula for psi, except without the pi/2
     marker_angle = this_theta - this_beta
@@ -398,7 +373,7 @@ def animate(i):
     # However, that isn't necessary here, since we didn't add 90 above
 
     line.set_data(thisx, thisy)
-    # line.set_color(rgba)
+    line.set_color(rgba)
     line.set_marker((3, 0, marker_angle))
     new_time = even_t[i]
     time_text.set_text(time_template % new_time)
