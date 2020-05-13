@@ -10,7 +10,8 @@ import pydrake.symbolic as sym
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
-from pydrake.all import LinearQuadraticRegulator
+from pydrake.all import LinearQuadraticRegulator, MakeFiniteHorizonLinearQuadraticRegulator, FiniteHorizonLinearQuadraticRegulatorOptions
+
 
 # GLOBAL OPTIONS
 input_type = "lqr"
@@ -127,6 +128,17 @@ position_system = SymbolicVectorSystem(
     dynamics=position_dynamics,
     output=position_state)
 
+
+# Initial conditions
+if input_type == "fixed":
+    x0 = [0] * len(plant_state) + [0] * len(position_state)
+    x0[0] = 5  # r
+    x0[1] = 0  # r dot
+    x0[2] = -0.1  # theta dot
+    x0[3] = 0  # beta
+    x0[4] = 0  # beta  dot
+    x0[5] = 0  # theta
+
 # Set up plant and position
 builder = DiagramBuilder()
 plant = builder.AddSystem(plant_vector_system)
@@ -174,35 +186,6 @@ elif input_type == "lqr":
     print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
     print("u_bar: [" + ("{:.5f}, "*len(u_bar)).format(*u_bar)[:-2] + "]")
 
-    # Set up LQR
-    lqr_context = plant.CreateDefaultContext()
-    plant.get_input_port(0).FixValue(lqr_context, u_bar)
-    lqr_context.SetContinuousState(x_bar)
-    Q = np.diag([1, 100, 100, 1, 1])
-    R = np.diag([0.5, 0.5, 0.1])
-    LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
-
-    # Connect plant to LQR
-    controller = builder.AddSystem(LQR_Controller)
-    builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
-    builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
-
-# Set up logging
-plant_logger = LogOutput(plant.get_output_port(0), builder)
-position_logger = LogOutput(position.get_output_port(0), builder)
-diagram = builder.Build()
-context = diagram.CreateDefaultContext()
-
-# Initial conditions
-if input_type == "fixed":
-    x0 = [0] * len(plant_state) + [0] * len(position_state)
-    x0[0] = 5  # r
-    x0[1] = 0  # r dot
-    x0[2] = -0.1  # theta dot
-    x0[3] = 0  # beta
-    x0[4] = 0  # beta  dot
-    x0[5] = 0  # theta
-elif input_type == "lqr":
     # x0 = x_bar + [0]
     x0 = [0] * len(plant_state) + [0] * len(position_state)
     x0[0] = r_bar  # - 10  # r
@@ -211,6 +194,26 @@ elif input_type == "lqr":
     x0[3] = beta_bar  # beta
     x0[4] = 0  # beta  dot
     x0[5] = 0  # theta
+
+    # Set up finite-horizon LQR
+    lqr_context = plant.CreateDefaultContext()
+    plant.get_input_port(0).FixValue(lqr_context, u_bar)
+    lqr_context.SetContinuousState(x_bar)
+    Q = np.diag([1, 100, 100, 1, 1])
+    R = np.diag([0.5, 0.5, 0.1])
+
+    controller = builder.AddSystem(MakeFiniteHorizonLinearQuadraticRegulator(
+        plant, lqr_context, 0, 0.1, Q=Q, R=R))  # , t0=options.u0.start_time(),
+
+    # Connect plant to LQR
+    builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
+    builder.Connect(plant.get_output_port(0), controller.get_input_port(0))
+
+# Set up logging
+plant_logger = LogOutput(plant.get_output_port(0), builder)
+position_logger = LogOutput(position.get_output_port(0), builder)
+diagram = builder.Build()
+context = diagram.CreateDefaultContext()
 context.SetContinuousState(x0)
 
 if input_type == "fixed":
@@ -228,7 +231,7 @@ if input_type == "fixed":
 # Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(5)
+simulator.AdvanceTo(25)
 
 plant_state = [
     r,
