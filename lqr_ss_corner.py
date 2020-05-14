@@ -11,14 +11,15 @@ from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.primitives import LogOutput, SymbolicVectorSystem
 from pydrake.all import LinearQuadraticRegulator, MakeFiniteHorizonLinearQuadraticRegulator, FiniteHorizonLinearQuadraticRegulatorOptions
-
+from pydrake.all import eq, MathematicalProgram, Solve, Variable
+from pydrake.all import DirectCollocation, PiecewisePolynomial, DirectTranscription
 
 # GLOBAL OPTIONS
 input_type = "lqr"
 fixed_input_type = "standard"
 
 # Check options
-assert input_type in {"lqr", "fixed"}, "Input type invalid"
+assert input_type in {"lqr", "fixed", "traj_opt"}, "Input type invalid"
 assert fixed_input_type in {"slip_angle", "force", "standard"}
 
 # Set up car parameters
@@ -36,6 +37,9 @@ S_RL = 1e4
 S_FC = 1e3
 S_RC = 1e3
 
+max_kappa = 0.1
+max_alpha = 0.1
+
 
 def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
     """"Helper function that will be used with brentq to find beta_ bar"""
@@ -46,17 +50,17 @@ def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
 
 
 # Inputs
-kappa_F = sym.Variable("u1")
-kappa_R = sym.Variable("u2")
-delta = sym.Variable("u3")
+kappa_F = sym.Variable("kappa_F")
+kappa_R = sym.Variable("kappa_R")
+delta = sym.Variable("delta")
 
 # Outputs
-r = sym.Variable("x1")
-r_dot = sym.Variable("x2")
-theta = sym.Variable("x3")
-theta_dot = sym.Variable("x4")
-beta = sym.Variable("x5")
-beta_dot = sym.Variable("x6")
+r = sym.Variable("r")
+r_dot = sym.Variable("r_dot")
+theta = sym.Variable("theta")
+theta_dot = sym.Variable("theta_dot")
+beta = sym.Variable("beta")
+beta_dot = sym.Variable("beta_dot")
 
 # v = r_dot r_hat + r theta_dot theta_hat
 v_r_hat = r_dot
@@ -87,23 +91,23 @@ else:
 F_x = F_xf + F_xr
 F_y = F_yr + F_yf
 
-plant_state = [
+plant_state = np.array([
     r,
     r_dot,
     theta_dot,
     beta,
     beta_dot
-]
+])
 
 theta_ddot = (F_x*sym.cos(beta) - F_y*sym.sin(beta)) / \
     (m*r) - 2*r_dot * theta_dot/r
-plant_dynamics = [
+plant_dynamics = np.array([
     r_dot,
     (F_x*sym.sin(beta) + F_y*sym.cos(beta))/m + r*theta_dot**2,
     theta_ddot,
     beta_dot,
     theta_ddot - (l_F*F_yf-l_R*F_yr)/Iz
-]
+])
 
 if input_type == "fixed" and fixed_input_type != "standard":
     if fixed_input_type == "slip_angle":
@@ -128,26 +132,18 @@ position_system = SymbolicVectorSystem(
     dynamics=position_dynamics,
     output=position_state)
 
-
-# Initial conditions
-if input_type == "fixed":
-    x0 = [0] * len(plant_state) + [0] * len(position_state)
-    x0[0] = 5  # r
-    x0[1] = 0  # r dot
-    x0[2] = -0.1  # theta dot
-    x0[3] = 0  # beta
-    x0[4] = 0  # beta  dot
-    x0[5] = 0  # theta
-
 # Set up plant and position
 builder = DiagramBuilder()
 plant = builder.AddSystem(plant_vector_system)
 position = builder.AddSystem(position_system)
 builder.Connect(plant.get_output_port(0), position.get_input_port(0))
 
+# If input type is fixed, we need the input to be exported so we can set it.
 if input_type == "fixed":
     builder.ExportInput(plant.get_input_port(0))
-elif input_type == "lqr":
+
+# Find steady state
+if input_type == "lqr" or input_type == "traj_opt":
     r_bar = 20.0
     delta_bar = 0.01
     omega_bar = 0.01
@@ -186,6 +182,17 @@ elif input_type == "lqr":
     print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
     print("u_bar: [" + ("{:.5f}, "*len(u_bar)).format(*u_bar)[:-2] + "]")
 
+
+# Initial conditions
+if input_type == "fixed":
+    x0 = [0] * len(plant_state) + [0] * len(position_state)
+    x0[0] = 5  # r
+    x0[1] = 0  # r dot
+    x0[2] = -0.1  # theta dot
+    x0[3] = 0  # beta
+    x0[4] = 0  # beta  dot
+    x0[5] = 0  # theta
+else:
     # x0 = x_bar + [0]
     x0 = [0] * len(plant_state) + [0] * len(position_state)
     x0[0] = r_bar  # - 10  # r
@@ -195,6 +202,48 @@ elif input_type == "lqr":
     x0[4] = 0  # beta  dot
     x0[5] = 0  # theta
 
+# Set up direction collocation
+prog_dt = 0.01  # 10 ms, like how messages are sent on the car
+max_tf = 0.5
+N = int(max_tf/prog_dt)
+
+prog_context = plant.CreateDefaultContext()
+prog = DirectCollocation(plant,
+                         prog_context,
+                         num_time_samples=N,
+                         minimum_timestep=prog_dt,
+                         maximum_timestep=prog_dt*2)
+prog.AddEqualTimeIntervalsConstraints()
+# prog = DirectTranscription(plant, prog_context, N)
+for idx, val in enumerate(x0[:-1]):
+    prog.SetInitialGuess(prog.initial_state()[idx], x0[idx])
+
+# Set state to all epsilons -- otherwise, solver gets divide by zero error
+prog.SetInitialGuessForAllVariables(np.full((prog.num_vars(), 1), 1e-5))
+
+# Start at initial condition
+# (Have to chop last entry because x0 is init state for whole diagram, so includes theta)
+prog.AddBoundingBoxConstraint(
+    x0[:-1], x0[:-1], prog.initial_state())
+# End at equilibrium
+prog.AddBoundingBoxConstraint(
+    x0[:-1], x0[:-1], prog.final_state())
+prog.AddFinalCost(prog.time())
+
+# R = 10  # Cost on input "effort".
+# u = prog.input()
+# prog.AddRunningCost(R * u[0]**2)
+# prog.AddConstraintToAllKnotPoints(u[0] >= 1e-5)
+# prog.AddConstraintToAllKnotPoints(u[1] <= -1e-5)
+# prog.AddConstraintToAllKnotPoints(u[2] >= 1e-5)
+
+print("Solving....")
+result = Solve(prog)
+print("Solve complete")
+assert result.is_success()
+print("Solver found solution!")
+
+if input_type == "lqr":
     # Set up finite-horizon LQR
     lqr_context = plant.CreateDefaultContext()
     plant.get_input_port(0).FixValue(lqr_context, u_bar)
