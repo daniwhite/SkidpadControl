@@ -15,7 +15,7 @@ from pydrake.all import eq, MathematicalProgram, Solve, Variable
 from pydrake.all import DirectCollocation, PiecewisePolynomial, DirectTranscription
 
 # GLOBAL OPTIONS
-input_type = "lqr"
+input_type = "traj_opt"
 fixed_input_type = "standard"
 
 # Check options
@@ -202,48 +202,50 @@ else:
     x0[4] = 0  # beta  dot
     x0[5] = 0  # theta
 
-# Set up direction collocation
-prog_dt = 0.01  # 10 ms, like how messages are sent on the car
-max_tf = 0.5
-N = int(max_tf/prog_dt)
+if input_type == "traj_opt":
+    # Set up direction collocation
+    prog_dt = 0.01  # 10 ms, like how messages are sent on the car
+    max_tf = 0.5
+    N = int(max_tf/prog_dt)
 
-prog_context = plant.CreateDefaultContext()
-prog = DirectCollocation(plant,
-                         prog_context,
-                         num_time_samples=N,
-                         minimum_timestep=prog_dt,
-                         maximum_timestep=prog_dt*2)
-prog.AddEqualTimeIntervalsConstraints()
-# prog = DirectTranscription(plant, prog_context, N)
-for idx, val in enumerate(x0[:-1]):
-    prog.SetInitialGuess(prog.initial_state()[idx], x0[idx])
+    prog_context = plant.CreateDefaultContext()
+    prog = DirectCollocation(plant,
+                             prog_context,
+                             num_time_samples=N,
+                             minimum_timestep=prog_dt,
+                             maximum_timestep=prog_dt*2)
+    prog.AddEqualTimeIntervalsConstraints()
+    # prog = DirectTranscription(plant, prog_context, N)
+    for idx, val in enumerate(x0[:-1]):
+        prog.SetInitialGuess(prog.initial_state()[idx], x0[idx])
 
-# Set state to all epsilons -- otherwise, solver gets divide by zero error
-prog.SetInitialGuessForAllVariables(np.full((prog.num_vars(), 1), 1e-5))
+    # Set state to all epsilons -- otherwise, solver gets divide by zero error
+    prog.SetInitialGuessForAllVariables(np.full((prog.num_vars(), 1), 1e-5))
 
-# Start at initial condition
-# (Have to chop last entry because x0 is init state for whole diagram, so includes theta)
-prog.AddBoundingBoxConstraint(
-    x0[:-1], x0[:-1], prog.initial_state())
-# End at equilibrium
-prog.AddBoundingBoxConstraint(
-    x0[:-1], x0[:-1], prog.final_state())
-prog.AddFinalCost(prog.time())
+    # Start at initial condition
+    # (Have to chop last entry because x0 is init state for whole diagram, so includes theta)
+    prog.AddBoundingBoxConstraint(
+        x0[:-1], x0[:-1], prog.initial_state())
+    # End at equilibrium
+    prog.AddBoundingBoxConstraint(
+        x_bar, x_bar, prog.final_state())
+    prog.AddFinalCost(prog.time())
 
-# R = 10  # Cost on input "effort".
-# u = prog.input()
-# prog.AddRunningCost(R * u[0]**2)
-# prog.AddConstraintToAllKnotPoints(u[0] >= 1e-5)
-# prog.AddConstraintToAllKnotPoints(u[1] <= -1e-5)
-# prog.AddConstraintToAllKnotPoints(u[2] >= 1e-5)
+    # R = 10  # Cost on input "effort".
+    # u = prog.input()
+    # prog.AddRunningCost(R * u[0]**2)
+    # prog.AddConstraintToAllKnotPoints(u[0] >= 1e-5)
+    # prog.AddConstraintToAllKnotPoints(u[1] <= -1e-5)
+    # prog.AddConstraintToAllKnotPoints(u[2] >= 1e-5)
 
-print("Solving....")
-result = Solve(prog)
-print("Solve complete")
-assert result.is_success()
-print("Solver found solution!")
+    print("Solving....")
+    result = Solve(prog)
+    print("Solve complete")
+    assert result.is_success()
+    print("Solver found solution!")
 
-if input_type == "lqr":
+# Set up LQR
+if input_type == "lqr" or input_type == "traj_opt":
     # Set up finite-horizon LQR
     lqr_context = plant.CreateDefaultContext()
     plant.get_input_port(0).FixValue(lqr_context, u_bar)
@@ -251,8 +253,19 @@ if input_type == "lqr":
     Q = np.diag([1, 100, 100, 1, 1])
     R = np.diag([0.5, 0.5, 0.1])
 
-    controller = builder.AddSystem(MakeFiniteHorizonLinearQuadraticRegulator(
-        plant, lqr_context, 0, 0.1, Q=Q, R=R))  # , t0=options.u0.start_time(),
+    if input_type == "traj_opt":
+        options = FiniteHorizonLinearQuadraticRegulatorOptions()
+        options.x0 = prog.ReconstructStateTrajectory(result)
+        options.u0 = prog.ReconstructInputTrajectory(result)
+        options.Qf = Q
+
+        controller = builder.AddSystem(
+            MakeFiniteHorizonLinearQuadraticRegulator(plant, lqr_context, t0=options.u0.start_time(),
+                                                      tf=options.u0.end_time(), Q=Q, R=R,
+                                                      options=options))
+    else:
+        controller = builder.AddSystem(MakeFiniteHorizonLinearQuadraticRegulator(
+            plant, lqr_context, 0, 0.1, Q=Q, R=R))  # , t0=options.u0.start_time(),
 
     # Connect plant to LQR
     builder.Connect(controller.get_output_port(0), plant.get_input_port(0))
@@ -280,7 +293,8 @@ if input_type == "fixed":
 # Create the simulator and simulate
 simulator = Simulator(diagram, context)
 simulator.Initialize()
-simulator.AdvanceTo(25)
+print("Simulating...")
+simulator.AdvanceTo(0.7)
 
 plant_state = [
     r,
@@ -374,7 +388,7 @@ if max_speed > 0:
 
 # Interpolate to a consistent time
 dt = 20e-3
-time_scaler = 1
+time_scaler = 0.1
 print("dt:", dt)
 even_t = np.arange(position_logger.sample_times()[
     0], position_logger.sample_times()[-1], dt*time_scaler)
