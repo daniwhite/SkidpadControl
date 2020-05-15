@@ -37,11 +37,11 @@ max_alpha = 0.1
 max_delta = 0.1
 
 
-def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
-    """"Helper function that will be used with brentq to find beta_ bar"""
-    ret = (l_F + l_R)*S_RC*beta_bar
+def get_ss_yaw_moment(phi_bar, omega_bar, r_bar):
+    """"Helper function that will be used with brentq to find phi_ bar"""
+    ret = (l_F + l_R)*S_RC*phi_bar
     ret /= l_F
-    ret += m*r_bar*omega_bar**2*np.cos(beta_bar)
+    ret += m*r_bar*omega_bar**2*np.cos(phi_bar)
     return ret
 
 
@@ -51,22 +51,22 @@ def get_ss(r_bar, delta_bar, omega_bar):
     print("      r_bar: {:.2f}\tomega_bar: {}\tdelta_bar: {}".format(
         r_bar, omega_bar, delta_bar))
 
-    # Solve for beta_bar numerically
-    beta_bar = scipy.optimize.brentq(
+    # Solve for phi_bar numerically
+    phi_bar = scipy.optimize.brentq(
         get_ss_yaw_moment, -np.pi/2, 0, args=(omega_bar, r_bar))
 
-    print("beta_bar: {:.6f}".format(beta_bar))
+    print("phi_bar: {:.6f}".format(phi_bar))
     assert abs(
-        beta_bar - delta_bar) < max_alpha, "Requested angular velocity is too high!"
+        phi_bar - delta_bar) < max_alpha, "Requested angular velocity is too high!"
 
-    alpha_R_bar = beta_bar
-    alpha_F_bar = beta_bar - delta_bar
+    alpha_R_bar = phi_bar
+    alpha_F_bar = phi_bar - delta_bar
 
     print("alpha_R_bar: {:.6f}\talpha_F_bar: {:.6f}".format(
         alpha_R_bar, alpha_F_bar))
 
-    F_x_bar = -m*r_bar*omega_bar**2*np.sin(beta_bar)
-    F_y_bar = -m*r_bar*omega_bar**2*np.cos(beta_bar)
+    F_x_bar = -m*r_bar*omega_bar**2*np.sin(phi_bar)
+    F_y_bar = -m*r_bar*omega_bar**2*np.cos(phi_bar)
 
     print("F_x_bar: {:.5f}\tF_y_bar: {:.5f}".format(F_x_bar, F_y_bar))
 
@@ -80,7 +80,7 @@ def get_ss(r_bar, delta_bar, omega_bar):
     print("kappa_F_bar: {:.2f}\tkappa_R_bar: {:.2f}".format(
         kappa_F_bar, kappa_R_bar))
 
-    x_bar = [r_bar, 0, omega_bar, beta_bar, 0]
+    x_bar = [r_bar, 0, omega_bar, phi_bar, 0]
     u_bar = [kappa_F_bar, kappa_R_bar, delta_bar]
 
     print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
@@ -101,17 +101,17 @@ def get_plant_and_pos():
     r_dot = sym.Variable("r_dot")
     theta = sym.Variable("theta")
     theta_dot = sym.Variable("theta_dot")
-    beta = sym.Variable("beta")
-    beta_dot = sym.Variable("beta_dot")
+    phi = sym.Variable("phi")
+    phi_dot = sym.Variable("phi_dot")
 
     # v = r_dot r_hat + r theta_dot theta_hat
     v_r_hat = r_dot
     v_theta_hat = r*theta_dot
-    gamma = sym.atan2(v_r_hat, v_theta_hat)
+    beta = sym.atan2(v_r_hat, v_theta_hat)
 
     # Slip angles
-    alpha_F = beta - delta - gamma
-    alpha_R = beta - gamma
+    alpha_F = phi - delta - beta
+    alpha_R = phi - beta
 
     F_xf = sym.cos(delta)*S_FL*kappa_F - sym.sin(delta)*S_FC*alpha_F
     F_xr = S_RL*kappa_R
@@ -125,17 +125,17 @@ def get_plant_and_pos():
         r,
         r_dot,
         theta_dot,
-        beta,
-        beta_dot
+        phi,
+        phi_dot
     ])
 
-    theta_ddot = (F_x*sym.cos(beta) - F_y*sym.sin(beta)) / \
+    theta_ddot = (F_x*sym.cos(phi) - F_y*sym.sin(phi)) / \
         (m*r) - 2*r_dot * theta_dot/r
     plant_dynamics = np.array([
         r_dot,
-        (F_x*sym.sin(beta) + F_y*sym.cos(beta))/m + r*theta_dot**2,
+        (F_x*sym.sin(phi) + F_y*sym.cos(phi))/m + r*theta_dot**2,
         theta_ddot,
-        beta_dot,
+        phi_dot,
         theta_ddot - (l_F*F_yf-l_R*F_yr)/Iz
     ])
 
@@ -191,11 +191,11 @@ def simulate(builder, plant, position, regulator, x0, duration):
     r_data = plant_logger.data()[0, :]
     r_dot_data = plant_logger.data()[1, :]
     theta_dot_data = plant_logger.data()[2, :]
-    beta_data = plant_logger.data()[3, :]
-    beta_dot_data = plant_logger.data()[4, :]
+    phi_data = plant_logger.data()[3, :]
+    phi_dot_data = plant_logger.data()[4, :]
     theta_data = position_logger.data()[0, :]
 
-    return t, r_data, r_dot_data, theta_dot_data, beta_data, beta_dot_data, theta_data
+    return t, r_data, r_dot_data, theta_dot_data, phi_data, phi_dot_data, theta_data
 
 
 fh_lqr_plant_vector_system, fh_lqr_position_system = get_plant_and_pos()
@@ -205,15 +205,15 @@ fh_lqr_position = fh_lqr_builder.AddSystem(fh_lqr_position_system)
 
 # Get equilibrium
 x_bar, u_bar = get_ss(20.0, 0.01, 0.001)
-r_bar, r_dot_bar, omega_bar, beta_bar, beta_dot_bar = x_bar
+r_bar, r_dot_bar, omega_bar, phi_bar, phi_dot_bar = x_bar
 
 # Configure initial conditions
 x0 = np.zeros(6)
 x0[0] = r_bar  # r
 x0[1] = 0  # r dot
 x0[2] = omega_bar  # theta dot
-x0[3] = beta_bar  # beta
-x0[4] = 0  # beta  dot
+x0[3] = phi_bar  # phi
+x0[4] = 0  # phi  dot
 x0[5] = 0  # theta
 
 if fh_lqr_time > 0:
@@ -245,14 +245,14 @@ if fh_lqr_time > 0:
     r = x[0]
     r_dot = x[1]
     theta_dot = x[2]
-    beta = x[4]
+    phi = x[4]
     v_r_hat = r_dot
     v_theta_hat = r*theta_dot
-    gamma = sym.atan2(v_r_hat, v_theta_hat)
+    beta = sym.atan2(v_r_hat, v_theta_hat)
 
     # Slip angles
-    alpha_F = beta - x[2] - gamma
-    alpha_R = beta - gamma
+    alpha_F = phi - x[2] - beta
+    alpha_R = phi - beta
 
     prog.AddConstraintToAllKnotPoints(alpha_F <= max_alpha)
     prog.AddConstraintToAllKnotPoints(alpha_F >= - max_alpha)
@@ -316,15 +316,15 @@ if fh_lqr_time > 0:
 
     plt.subplot(325)
     plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
-    plt.axhline(beta_bar, color='gray', linestyle='--')
+    plt.axhline(phi_bar, color='gray', linestyle='--')
     plt.xlabel("$t$")
-    plt.ylabel(r"$\beta$")
+    plt.ylabel(r"$\phi$")
 
     plt.subplot(326)
     plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
     plt.axhline(0, color='gray', linestyle='--')
     plt.xlabel("$t$")
-    plt.ylabel(r"$\dot\beta$")
+    plt.ylabel(r"$\dot\phi$")
 
     fh_lqr = MakeFiniteHorizonLinearQuadraticRegulator(fh_lqr_plant, fh_lqr_context, t0=options.u0.start_time(),
                                                        tf=options.u0.end_time(), Q=Q, R=R,
@@ -333,16 +333,16 @@ if fh_lqr_time > 0:
     print("end_of_traj: [" + ("{:.5f}, " *
                               len(end_of_traj)).format(*end_of_traj.flatten())[:-2] + "]")
 
-    fh_lqr_t, fh_lqr_r_data, fh_lqr_r_dot_data, fh_lqr_theta_dot_data, fh_lqr_beta_data, \
-        fh_lqr_beta_dot_data, fh_lqr_theta_data, = simulate(
+    fh_lqr_t, fh_lqr_r_data, fh_lqr_r_dot_data, fh_lqr_theta_dot_data, fh_lqr_phi_data, \
+        fh_lqr_phi_dot_data, fh_lqr_theta_data, = simulate(
             fh_lqr_builder, fh_lqr_plant, fh_lqr_position, fh_lqr, x0, options.u0.end_time())
 
     ss_x0 = [
         fh_lqr_r_data[-1],
         fh_lqr_r_dot_data[-1],
         fh_lqr_theta_dot_data[-1],
-        fh_lqr_beta_data[-1],
-        fh_lqr_beta_dot_data[-1],
+        fh_lqr_phi_data[-1],
+        fh_lqr_phi_dot_data[-1],
         fh_lqr_theta_data[-1]
     ]
 
@@ -358,8 +358,8 @@ else:
     fh_lqr_r_data = []
     fh_lqr_r_dot_data = []
     fh_lqr_theta_dot_data = []
-    fh_lqr_beta_data = []
-    fh_lqr_beta_dot_data = []
+    fh_lqr_phi_data = []
+    fh_lqr_phi_dot_data = []
     fh_lqr_theta_data = []
 
 # Set up LQR
@@ -375,8 +375,8 @@ Q = np.diag([1, 100, 100, 1, 1])
 R = np.diag([0.5, 0.5, 0.1])
 LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
 
-lqr_t, lqr_r_data, lqr_r_dot_data, lqr_theta_dot_data, lqr_beta_data, \
-    lqr_beta_dot_data, lqr_theta_data, = simulate(
+lqr_t, lqr_r_data, lqr_r_dot_data, lqr_theta_dot_data, lqr_phi_data, \
+    lqr_phi_dot_data, lqr_theta_data, = simulate(
         lqr_builder, lqr_plant_vector_system, lqr_position_system, LQR_Controller, ss_x0, simulation_time - fh_lqr_time)
 
 if fh_lqr_time > 0:
@@ -385,8 +385,8 @@ t = np.concatenate((fh_lqr_t, lqr_t))
 r_data = np.concatenate((fh_lqr_r_data, lqr_r_data))
 r_dot_data = np.concatenate((fh_lqr_r_dot_data, lqr_r_dot_data))
 theta_dot_data = np.concatenate((fh_lqr_theta_dot_data, lqr_theta_dot_data))
-beta_data = np.concatenate((fh_lqr_beta_data, lqr_beta_data))
-beta_dot_data = np.concatenate((fh_lqr_beta_dot_data, lqr_beta_dot_data))
+phi_data = np.concatenate((fh_lqr_phi_data, lqr_phi_data))
+phi_dot_data = np.concatenate((fh_lqr_phi_dot_data, lqr_phi_dot_data))
 theta_data = np.concatenate((fh_lqr_theta_data, lqr_theta_data))
 
 
@@ -422,20 +422,20 @@ plt.xlabel("$t$")
 plt.ylabel(r"$\dot\theta$")
 
 plt.subplot(325)
-plt.plot(t, beta_data)
-plt.axhline(beta_bar, color='gray', linestyle='--')
+plt.plot(t, phi_data)
+plt.axhline(phi_bar, color='gray', linestyle='--')
 plt.axvline(switch_time, color='gray', linestyle='--')
 # plt.ylim(-2, 1)
 plt.xlabel("$t$")
-plt.ylabel(r"$\beta$")
+plt.ylabel(r"$\phi$")
 
 plt.subplot(326)
-plt.plot(t, beta_dot_data)
+plt.plot(t, phi_dot_data)
 plt.axhline(0, color='gray', linestyle='--')
 plt.axvline(switch_time, color='gray', linestyle='--')
 # plt.ylim(-5, 5)
 plt.xlabel("$t$")
-plt.ylabel(r"$\dot\beta$")
+plt.ylabel(r"$\dot\phi$")
 
 x_data = r_data * np.cos(theta_data)
 y_data = r_data * np.sin(theta_data)
@@ -474,7 +474,7 @@ even_t = np.arange(t[0], t[-1], dt*time_scaler)
 x_data_even_t = np.interp(even_t, t, x_data)
 y_data_even_t = np.interp(even_t, t, y_data)
 theta_data_even_t = np.interp(even_t, t, theta_data)
-beta_data_even_t = np.interp(even_t, t, beta_data)
+phi_data_even_t = np.interp(even_t, t, phi_data)
 speed_data_even_t = np.interp(even_t, t, speed)
 
 plt.grid(True)
@@ -498,14 +498,14 @@ def animate(i):
     thisx = [x_data_even_t[i]]
     thisy = [y_data_even_t[i]]
     this_theta = theta_data_even_t[i]
-    this_beta = beta_data_even_t[i]
+    this_phi = phi_data_even_t[i]
     if max_speed > 0:
         rgba = cmap(speed_data_even_t[i]/max_speed)
     else:
         rgba = cmap(0)
 
     # uses same formula for psi, except without the pi/2
-    marker_angle = this_theta - this_beta
+    marker_angle = this_theta - this_phi
     marker_angle *= 180/np.pi
     # Normally we'd have to subtract pi/2 or 90, to make sure the triangle is horizontal.
     # However, that isn't necessary here, since we didn't add 90 above
