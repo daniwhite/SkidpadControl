@@ -33,7 +33,7 @@ max_kappa = 0.1
 max_alpha = 0.1
 
 simulation_time = 5
-fh_lqr_time = 0.5
+fh_lqr_time = 1
 
 
 def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
@@ -199,131 +199,163 @@ fh_lqr_plant = fh_lqr_builder.AddSystem(fh_lqr_plant_vector_system)
 fh_lqr_position = fh_lqr_builder.AddSystem(fh_lqr_position_system)
 
 # Get equilibrium
-x_bar, u_bar = get_ss(20.0, 0.01, 0.01)
+x_bar, u_bar = get_ss(20.0, 0.01, 0.001)
 r_bar, r_dot_bar, omega_bar, beta_bar, beta_dot_bar = x_bar
 
 # Configure initial conditions
 x0 = np.zeros(6)
-x0[0] = r_bar-0.1  # r
+x0[0] = r_bar  # r
 x0[1] = 0  # r dot
 x0[2] = omega_bar  # theta dot
 x0[3] = beta_bar  # beta
 x0[4] = 0  # beta  dot
 x0[5] = 0  # theta
 
+if fh_lqr_time > 0:
+    # Set up direction collocation
+    prog_dt = 0.01  # 10 ms, like how messages are sent on the car
+    max_tf = fh_lqr_time
+    N = int(max_tf/prog_dt)
 
-# Set up direction collocation
-prog_dt = 0.01  # 10 ms, like how messages are sent on the car
-max_tf = fh_lqr_time
-N = int(max_tf/prog_dt)
+    prog_context = fh_lqr_plant.CreateDefaultContext()
+    prog = DirectCollocation(fh_lqr_plant,
+                             prog_context,
+                             num_time_samples=N,
+                             minimum_timestep=prog_dt,
+                             maximum_timestep=prog_dt*2)
+    prog.AddEqualTimeIntervalsConstraints()
+    # prog = DirectTranscription(plant, prog_contexodt, N)
+    for idx, val in enumerate(x0[: -1]):
+        prog.SetInitialGuess(prog.initial_state()[idx], x0[idx])
 
-prog_context = fh_lqr_plant.CreateDefaultContext()
-prog = DirectCollocation(fh_lqr_plant,
-                         prog_context,
-                         num_time_samples=N,
-                         minimum_timestep=prog_dt,
-                         maximum_timestep=prog_dt*2)
-prog.AddEqualTimeIntervalsConstraints()
-# prog = DirectTranscription(plant, prog_contexodt, N)
-for idx, val in enumerate(x0[: -1]):
-    prog.SetInitialGuess(prog.initial_state()[idx], x0[idx])
+    # Set state to all epsilons -- otherwise, solver gets divide by zero error
+    prog.SetInitialGuessForAllVariables(np.full((prog.num_vars(), 1), 1e-5))
+    R_ = 0.01  # Cost on input "effort".
+    u = prog.input()
+    # prog.AddRunningCost(R_ * u[0]**2)
+    # prog.AddRunningCost(R_ * u[1]**2)
+    # prog.AddRunningCost(R_ * u[2]**2)
+    x = prog.state()
+    # prog.AddRunningCost(0.01*x[1]**2)
+    r = x[0]
+    r_dot = x[1]
+    theta_dot = x[2]
+    beta = x[4]
+    v_r_hat = r_dot
+    v_theta_hat = r*theta_dot
+    gamma = sym.atan2(v_r_hat, v_theta_hat)
 
-# Set state to all epsilons -- otherwise, solver gets divide by zero error
-prog.SetInitialGuessForAllVariables(np.full((prog.num_vars(), 1), 1e-5))
-R_ = 0.01  # Cost on input "effort".
-u = prog.input()
-# prog.AddRunningCost(R_ * u[0]**2)
-# prog.AddRunningCost(R_ * u[1]**2)
-# prog.AddRunningCost(R_ * u[2]**2)
+    # Slip angles
+    alpha_F = beta - x[2] - gamma
+    alpha_R = beta - gamma
 
-# Start at initial condition
-# (Have to chop last entry because x0 is init state for whole diagram, so includes theta)
-prog.AddBoundingBoxConstraint(
-    x0[: -1], x0[: -1], prog.initial_state())
-# End at equilibrium
-prog.AddBoundingBoxConstraint(
-    x_bar, x_bar, prog.final_state())
-prog.AddBoundingBoxConstraint(u_bar, u_bar, prog.input(0))
-prog.AddBoundingBoxConstraint(u_bar, u_bar, prog.input(N-1))
-prog.AddFinalCost(prog.time())
+    prog.AddConstraintToAllKnotPoints(alpha_F <= max_alpha)
+    prog.AddConstraintToAllKnotPoints(alpha_F >= - max_alpha)
+    prog.AddConstraintToAllKnotPoints(alpha_R <= max_alpha)
+    prog.AddConstraintToAllKnotPoints(alpha_R >= - max_alpha)
+    # prog.AddConstraintToAllKnotPoints(u[0] <= max_kappa)
+    # prog.AddConstraintToAllKnotPoints(max_kappa >= -u[0])
+    # prog.AddConstraintToAllKnotPoints(u[1] <= max_kappa)
+    # prog.AddConstraintToAllKnotPoints(max_kappa >= -u[1])
 
-print("Solving....")
-result = Solve(prog)
-print("Solve complete")
-assert result.is_success()
-print("Solver found solution!")
+    # Start at initial condition
+    # (Have to chop last entry because x0 is init state for whole diagram, so includes theta)
+    prog.AddBoundingBoxConstraint(
+        x0[: -1], x0[: -1], prog.initial_state())
+    # End at equilibrium
+    prog.AddBoundingBoxConstraint(
+        x_bar, x_bar, prog.final_state())
+    prog.AddBoundingBoxConstraint(u_bar, u_bar, prog.input(0))
+    prog.AddBoundingBoxConstraint(u_bar, u_bar, prog.input(N-1))
+    prog.AddFinalCost(prog.time())
 
-# Set up finite-horizon LQR
-fh_lqr_context = fh_lqr_plant.CreateDefaultContext()
-fh_lqr_plant.get_input_port(0).FixValue(fh_lqr_context, u_bar)
-fh_lqr_context.SetContinuousState(x_bar)
-Q = np.diag([100, 10, 10, 100, 1])
-R = np.diag([0.5, 0.5, 0.1])
+    print("Solving....")
+    result = Solve(prog)
+    print("Solve complete")
+    assert result.is_success()
+    print("Solver found solution!")
 
-options = FiniteHorizonLinearQuadraticRegulatorOptions()
-options.x0 = prog.ReconstructStateTrajectory(result)
-options.u0 = prog.ReconstructInputTrajectory(result)
-options.Qf = Q
+    # Set up finite-horizon LQR
+    fh_lqr_context = fh_lqr_plant.CreateDefaultContext()
+    fh_lqr_plant.get_input_port(0).FixValue(fh_lqr_context, u_bar)
+    fh_lqr_context.SetContinuousState(x_bar)
+    Q = np.diag([100, 10, 10, 100, 1])
+    R = np.diag([0.5, 0.5, 0.1])
 
-traj_x_values = options.x0.vector_values(options.x0.get_segment_times())
-traj_u_values = options.x0.vector_values(options.u0.get_segment_times())
+    options = FiniteHorizonLinearQuadraticRegulatorOptions()
+    options.x0 = prog.ReconstructStateTrajectory(result)
+    options.u0 = prog.ReconstructInputTrajectory(result)
+    options.Qf = Q
 
+    traj_x_values = options.x0.vector_values(options.x0.get_segment_times())
+    traj_u_values = options.x0.vector_values(options.u0.get_segment_times())
 
-plt.figure()
-plt.subplot(321)
-plt.plot(options.x0.get_segment_times(), traj_x_values[0, :])
-plt.axhline(r_bar, color='gray', linestyle='--')
-plt.xlabel("$t$")
-plt.ylabel("$r$")
+    plt.figure()
+    plt.subplot(321)
+    plt.plot(options.x0.get_segment_times(), traj_x_values[0, :])
+    plt.axhline(r_bar, color='gray', linestyle='--')
+    plt.xlabel("$t$")
+    plt.ylabel("$r$")
 
-plt.subplot(322)
-plt.plot(options.x0.get_segment_times(), traj_x_values[1, :])
-plt.axhline(0, color='gray', linestyle='--')
-plt.xlabel("$t$")
-plt.ylabel(r"$\dot r$")
+    plt.subplot(322)
+    plt.plot(options.x0.get_segment_times(), traj_x_values[1, :])
+    plt.axhline(0, color='gray', linestyle='--')
+    plt.xlabel("$t$")
+    plt.ylabel(r"$\dot r$")
 
-plt.subplot(324)
-plt.plot(options.x0.get_segment_times(), traj_x_values[2, :])
-plt.axhline(omega_bar, color='gray', linestyle='--')
-plt.xlabel("$t$")
-plt.ylabel(r"$\dot\theta$")
+    plt.subplot(324)
+    plt.plot(options.x0.get_segment_times(), traj_x_values[2, :])
+    plt.axhline(omega_bar, color='gray', linestyle='--')
+    plt.xlabel("$t$")
+    plt.ylabel(r"$\dot\theta$")
 
-plt.subplot(325)
-plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
-plt.axhline(beta_bar, color='gray', linestyle='--')
-plt.xlabel("$t$")
-plt.ylabel(r"$\beta$")
+    plt.subplot(325)
+    plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
+    plt.axhline(beta_bar, color='gray', linestyle='--')
+    plt.xlabel("$t$")
+    plt.ylabel(r"$\beta$")
 
-plt.subplot(326)
-plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
-plt.axhline(0, color='gray', linestyle='--')
-plt.xlabel("$t$")
-plt.ylabel(r"$\dot\beta$")
+    plt.subplot(326)
+    plt.plot(options.x0.get_segment_times(), traj_x_values[3, :])
+    plt.axhline(0, color='gray', linestyle='--')
+    plt.xlabel("$t$")
+    plt.ylabel(r"$\dot\beta$")
 
-fh_lqr = MakeFiniteHorizonLinearQuadraticRegulator(fh_lqr_plant, fh_lqr_context, t0=options.u0.start_time(),
-                                                   tf=options.u0.end_time(), Q=Q, R=R,
-                                                   options=options)
-end_of_traj = options.x0.value(options.u0.end_time())
-print("end_of_traj: [" + ("{:.5f}, " *
-                          len(end_of_traj)).format(*end_of_traj.flatten())[:-2] + "]")
+    fh_lqr = MakeFiniteHorizonLinearQuadraticRegulator(fh_lqr_plant, fh_lqr_context, t0=options.u0.start_time(),
+                                                       tf=options.u0.end_time(), Q=Q, R=R,
+                                                       options=options)
+    end_of_traj = options.x0.value(options.u0.end_time())
+    print("end_of_traj: [" + ("{:.5f}, " *
+                              len(end_of_traj)).format(*end_of_traj.flatten())[:-2] + "]")
 
-fh_lqr_t, fh_lqr_r_data, fh_lqr_r_dot_data, fh_lqr_theta_dot_data, fh_lqr_beta_data, \
-    fh_lqr_beta_dot_data, fh_lqr_theta_data, = simulate(
-        fh_lqr_builder, fh_lqr_plant, fh_lqr_position, fh_lqr, x0, options.u0.end_time())
+    fh_lqr_t, fh_lqr_r_data, fh_lqr_r_dot_data, fh_lqr_theta_dot_data, fh_lqr_beta_data, \
+        fh_lqr_beta_dot_data, fh_lqr_theta_data, = simulate(
+            fh_lqr_builder, fh_lqr_plant, fh_lqr_position, fh_lqr, x0, options.u0.end_time())
 
-ss_x0 = [
-    fh_lqr_r_data[-1],
-    fh_lqr_r_dot_data[-1],
-    fh_lqr_theta_dot_data[-1],
-    fh_lqr_beta_data[-1],
-    fh_lqr_beta_dot_data[-1],
-    fh_lqr_theta_data[-1]
-]
+    ss_x0 = [
+        fh_lqr_r_data[-1],
+        fh_lqr_r_dot_data[-1],
+        fh_lqr_theta_dot_data[-1],
+        fh_lqr_beta_data[-1],
+        fh_lqr_beta_dot_data[-1],
+        fh_lqr_theta_data[-1]
+    ]
 
-switch_time = options.u0.end_time()
+    switch_time = options.u0.end_time()
 
-print("ss_x0: [" + ("{:.5f}, "*len(ss_x0)).format(*ss_x0)[:-2] + "]")
-print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
+    print("ss_x0: [" + ("{:.5f}, "*len(ss_x0)).format(*ss_x0)[:-2] + "]")
+    print("x_bar: [" + ("{:.5f}, "*len(x_bar)).format(*x_bar)[:-2] + "]")
+else:
+    switch_time = 0
+    ss_x0 = x0
+
+    fh_lqr_t = []
+    fh_lqr_r_data = []
+    fh_lqr_r_dot_data = []
+    fh_lqr_theta_dot_data = []
+    fh_lqr_beta_data = []
+    fh_lqr_beta_dot_data = []
+    fh_lqr_theta_data = []
 
 # Set up LQR
 lqr_plant_vector_system, lqr_position_system = get_plant_and_pos()
@@ -340,9 +372,10 @@ LQR_Controller = LinearQuadraticRegulator(plant, lqr_context, Q, R)
 
 lqr_t, lqr_r_data, lqr_r_dot_data, lqr_theta_dot_data, lqr_beta_data, \
     lqr_beta_dot_data, lqr_theta_data, = simulate(
-        lqr_builder, lqr_plant_vector_system, lqr_position_system, LQR_Controller, ss_x0, simulation_time - options.u0.end_time())
+        lqr_builder, lqr_plant_vector_system, lqr_position_system, LQR_Controller, ss_x0, simulation_time - fh_lqr_time)
 
-lqr_t = lqr_t + fh_lqr_t[-1]
+if fh_lqr_time > 0:
+    lqr_t = lqr_t + fh_lqr_t[-1]
 t = np.concatenate((fh_lqr_t, lqr_t))
 r_data = np.concatenate((fh_lqr_r_data, lqr_r_data))
 r_dot_data = np.concatenate((fh_lqr_r_dot_data, lqr_r_dot_data))
@@ -430,7 +463,7 @@ if max_speed > 0:
 
 # Interpolate to a consistent time
 dt = 20e-3
-time_scaler = 0.1
+time_scaler = 1
 print("dt:", dt)
 even_t = np.arange(t[0], t[-1], dt*time_scaler)
 x_data_even_t = np.interp(even_t, t, x_data)
