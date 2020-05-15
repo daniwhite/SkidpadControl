@@ -29,11 +29,12 @@ S_RL = 1e4
 S_FC = 1e3
 S_RC = 1e3
 
-max_kappa = 0.1
-max_alpha = 0.1
-
 simulation_time = 5
 fh_lqr_time = 1
+
+max_kappa = 0.1
+max_alpha = 0.1
+max_delta = 0.1
 
 
 def get_ss_yaw_moment(beta_bar, omega_bar, r_bar):
@@ -54,11 +55,15 @@ def get_ss(r_bar, delta_bar, omega_bar):
     beta_bar = scipy.optimize.brentq(
         get_ss_yaw_moment, -np.pi/2, 0, args=(omega_bar, r_bar))
 
+    print("beta_bar: {:.6f}".format(beta_bar))
+    assert abs(
+        beta_bar - delta_bar) < max_alpha, "Requested angular velocity is too high!"
+
     alpha_R_bar = beta_bar
     alpha_F_bar = beta_bar - delta_bar
 
-    print("alpha_R_bar: {:.6f}\talpha_F_bar: {:.6f}\t beta_bar: {:.6f}".format(
-        alpha_R_bar, alpha_F_bar, beta_bar))
+    print("alpha_R_bar: {:.6f}\talpha_F_bar: {:.6f}".format(
+        alpha_R_bar, alpha_F_bar))
 
     F_x_bar = -m*r_bar*omega_bar**2*np.sin(beta_bar)
     F_y_bar = -m*r_bar*omega_bar**2*np.cos(beta_bar)
@@ -85,6 +90,7 @@ def get_ss(r_bar, delta_bar, omega_bar):
 
 
 def get_plant_and_pos():
+    """"Set up plant and position systems."""
     # Inputs
     kappa_F = sym.Variable("kappa_F")
     kappa_R = sym.Variable("kappa_R")
@@ -121,8 +127,6 @@ def get_plant_and_pos():
         theta_dot,
         beta,
         beta_dot
-
-
     ])
 
     theta_ddot = (F_x*sym.cos(beta) - F_y*sym.sin(beta)) / \
@@ -156,6 +160,7 @@ def get_plant_and_pos():
 
 
 def simulate(builder, plant, position, regulator, x0, duration):
+    """"Actually run simulation and return data."""
     # Set up plant and position
     builder.Connect(plant.get_output_port(0), position.get_input_port(0))
     controller = builder.AddSystem(regulator)
